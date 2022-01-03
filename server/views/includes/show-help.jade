@@ -1,0 +1,88 @@
+// This file contains the views for the various simple help screens in this dApp.
+//  Include this file in any JADE layout where you want to support popup dialogs
+//  and help text displays.
+
+// This DIV will be shown whenever a floating popup needs to be shown.
+div(id="floating-popup-div" class="content-container popup hide-me")
+    // The title row.
+    div(class="floating-popup-title-div")
+        h2(id="floating-popup-title-h2" class="popup-title")
+    // The BODY of the floating popup dialog.
+    div(id="floating-popup-body-div" class="content-container")
+
+// This DIV will be shown whenever a help popup needs to be shown.
+div(id="help-popup-div" class="content-container popup hide-me help-popup")
+    // The title row.
+    div(class="floating-popup-title-div")
+        h2(id="help-popup-title-h2" class="popup-title")
+    // The BODY of the help popup dialog.
+    div(id="help-popup-body-div" class="content-container")
+
+// ------------------------------------ HANDLEBARS TEMPLATES --------------------------------------
+
+// Payments, Payouts, and Terms (MINI).
+script(id="payments-payouts-and-terms-mini-template", type="text/x-handlebars-template")
+    p(class="section-body")
+        span(class="help-field-label") NEOCHEX TRANSACTION FEE:
+        span(class="help-text") NOTE: All amounts paid to you
+            | will have a Neochex transaction fee of {{systemTransactionFeePercentage}}
+            | percent applied to them.
+
+    p(class="section-body")
+        span(class="help-field-label") IMPORTANT:
+        span(class="help-text") Note, you will <b>not</b> transfer or receive any
+            | {{currentAssetSymbol}} tokens when the option expires.  Instead you
+            | will receive an amount of NEO GAS tokens equal to the amount of profit
+            | your option has made when the option expires.
+
+    p(class="section-body")
+        span(class="help-text") Clicking the OK button indicates your acceptance of
+            | this information <i>and</i> also the Neochex site
+            | <b>Terms of Use</b> and <b>Privacy Policy</b>.
+
+// Strike Price Auto-Adjustment for Offers.
+script(id="strike-price-auto-adjustment-for-offers-template", type="text/x-handlebars-template")
+    p(class="section-sub-header") Auto Adjustment of Strike Prices for Offers
+    p(class="section-body")
+        | The strike price of any options bought from an offer will be
+        | <b>automatically</b> adjusted based on the current
+        | price of an offer's target cryptocurrency at the moment an
+        | option contract purchase occurs. This is to protect
+        | you from selling poorly priced options because your
+        | strike price is no longer the same amount above or
+        | below the current asset price at a future date.
+    p(class="section-body")
+        | For example, you create a CALL offer when the price
+        | of the cryptocurrency is 3 USD with a strike price
+        | of 10 USD.  Therefore your strike price is 7 USD above
+        | the current cryptocurrency price.   A week later, the price
+        | of that cryptocurrency jumps to 37 USD.  You would
+        | <b>not</b> want a CALL option to be written
+        | from your offer with a strike
+        | price of 10 USD, because that price is now
+        | 27 USD less than the current cryptocurrency price.
+    p(class="section-body")
+        | That would be a terrible deal for you and you
+        | would lose money immediately.  Instead, the system
+        | will automatically raise the strike price of your
+        | option to 44 USD before showing it to the
+        | buyer because that price is 7 USD
+        | above the current cryptocurrency price, retaining
+        | the original relative price relationship of your
+        | original offer.
+
+// Instruct user to select an account from NeoLine.
+script(id="pick-address-from-neoline-template", type="text/x-handlebars-template")
+    p(class="section-sub-header") Select Account
+    p(class="section-body")
+        | Please choose the account that you want to see.  Press OK to activate NeoLine now.
+
+// Show this to the user if they cancel the NeoLine account selection
+//  process from the Dashboard.
+script(id="pick-address-from-neoline-cancelled-template", type="text/x-handlebars-template")
+    p(class="section-sub-header") Information
+    p(class="section-body")
+        | You cancelled the account selection step.  You will not
+        |  see any open option contract positions on this page
+        |  until you complete that step.  Refresh this page in
+        |  your browser if you want to try again.

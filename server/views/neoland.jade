@@ -1,0 +1,272 @@
+// The view for the Neoland/Dolby universe.
+
+extends layout
+
+block meta
+    meta(name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0")
+
+block extra_javascript
+    script(type="text/javascript" src="/javascripts/ua-parser-js/ua-parser.min.js")
+
+    script(type="text/javascript" src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta2/dist/js/bootstrap.bundle.min.js" integrity="sha384-b5kHyXgcpbZJO/tY9Ul7kGkf1S0CWuKcCD38l8YkeH8z8QjE0GmW1gYU5S9FOnJ0" crossorigin="anonymous")
+
+    // ------------------------ JAVASCRIPT ---------------------
+    script(type="module", src="/javascripts/threejs/examples/pointerlock.js")
+    script(type="module", src="/javascripts/threejs/examples/animate-loop.js")
+
+    // ------------------------ JAVASCRIPT ---------------------
+
+    // HOWLER
+    script(type="text/javascript", src="/javascripts/howler-js/src/howler.core.js")
+    script(type="text/javascript", src="/javascripts/howler-js/src/plugins/howler.spatial.js")
+
+    // YOUTUBE SUPPORT
+    script(type="text/javascript", src="/javascripts/youtube//youtube-api-support.js")
+
+    // DOLBY API/SDK and support code for conferencing using those APIs.
+    script(src="https://unpkg.com/@voxeet/voxeet-web-sdk@3.4.0-beta.1/dist/voxeet-sdk.js" type="text/javascript")
+    // script(src="./javascripts/dolby-io/video.js" type="text/javascript")
+    script(type="module" src="./javascripts/dolby-io/video.js")
+
+    script(type="module"  src="./javascripts/dolby-io/utils.js")
+    script(type="module"  src="./javascripts/dolby-io/ui.js")
+    script(src="https://kit.fontawesome.com/9a46dc54f8.js" crossorigin="anonymous")
+
+    // WebSocket support for Sumerian code.
+    script(src="/javascripts/websockets/websockets-client.js")
+
+    // Audio sprites for Howler.
+    script(type="module" src="/javascripts/sound-effects-support/audio-sprites-support.js")
+
+    // Dolby client code that initializes the Dolby environment.
+    script(type="module" src="./javascripts/dolby-io/client.js")
+
+    // Our helper code for the DolbyIO SDK.
+    script(type="module" src="./javascripts/dolby-io/dolby-io-support.js")
+
+    // Page support
+    script(type="module"  src="/javascripts/page-support/neoland-page-support.js")
+
+block header_css
+    // link(href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta2/dist/css/bootstrap.min.css" rel="stylesheet"
+        integrity="sha384-BmbxuPwQa2lc/FVzBcNJ7UAyJxM6wuqIj61tLrc4wSX0szH/Ev+nYRRuWlolflfl" crossorigin="anonymous")
+
+    // ROS: CSS from Dolby is-speaking demo.
+    // link(rel="stylesheet" href="/stylesheets/dolby/index.css")
+
+    // link(rel='stylesheet', href='/stylesheets/threejs/examples/main.css')
+    link(rel='stylesheet', href='/stylesheets/threejs/examples/pointerlock.css')
+
+
+block content
+    // TEMP CODE
+    // div(class="video-container track-avatar" data-track-number="0" id="video-container-0" height="500px" width="1000px")
+    div(id="sfx-diagnostics" style="display: visible;")
+        p
+            span(class="sfx-diagnostics-label") (SFX Diagnostics)
+
+    // Test track avatar 2.
+    div(id="outer-table-div" class="")
+        table(id="outer-table")
+            tbody
+                tr(id="control-panel-row")
+                    td(class="outer-table-td")
+                        // Use an HTML table for the buttons.
+                        div(class="" id="button-row-div")
+                            table(id="button-row-table")
+                                tbody
+                                    tr(id="ui-button-row-tr" class="button-row-tr")
+                                        // FPS controls help.
+                                        td(class="button-row-td")
+                                            div(class="fps-info")
+                                                // Left arrow.
+                                                div(class='fps-controls-keyboard-character-div' title="Hold the 'A' key down to strafe left")
+                                                    p(class='fps-controls-keyboard-character-p') A
+                                                div(class='fps-controls-graphic-div' title="Hold the 'A' key down to strafe left")
+                                                    img(class='fps-controls-left-right-arrow' src="/images/ui-controls/green-arrow-left-sml-1.png")
+                                            div(class="fps-info")
+                                                // Right arrow.
+                                                div(class='fps-controls-keyboard-character-div' title="Hold the 'D' key down to strafe right")
+                                                    p(class='fps-controls-keyboard-character-p') D
+                                                div(class='fps-controls-graphic-div' title="Hold the 'D' key down to strafe right")
+                                                    img(class='fps-controls-left-right-arrow' src="/images/ui-controls/green-arrow-right-sml-1.png")
+                                            div(class="fps-info")
+                                                // Up arrow.
+                                                div(class='fps-controls-keyboard-character-div' title="Hold the 'W' key down to move forward")
+                                                    p(class='fps-controls-keyboard-character-p') W
+                                                div(class='fps-controls-graphic-div' title="Hold the 'W' key down to move forward")
+                                                    img(class='fps-controls-arrow' src="/images/ui-controls/green-arrow-up-sml-1.png")
+                                            div(class="fps-info")
+                                                // Down arrow.
+                                                div(class='fps-controls-keyboard-character-div' title="Hold the 'S' key down to move backward")
+                                                    p(class='fps-controls-keyboard-character-p') S
+                                                div(class='fps-controls-graphic-div' title="Hold the 'S' key down to move backward")
+                                                    img(class='fps-controls-arrow' src="/images/ui-controls/green-arrow-down-sml-1.png")
+                                            div(class="fps-info")
+                                                // Esc/Exit
+                                                div(class='fps-controls-keyboard-character-div' title="Press the 'Esc' key to exit the world")
+                                                    p(id='escape-key-p' class='fps-controls-keyboard-character-p') ESC
+                                                div(class='fps-controls-graphic-div' title="Press the 'Esc' key to exit the world")
+                                                    img(class='fps-controls-arrow' src="/images/ui-controls/leave-world-sml.png")
+
+                                        td(class="button-row-td")
+                                            // Mic OFF icon.
+                                            div(class="device-settings mic-btn-div" id="mic-muted-div" title="Unmute microphone")
+                                                div(class='fps-controls-keyboard-character-div toolbar-btn' title="Press the 'M' key to MUTE the microphone")
+                                                    p(class='fps-controls-keyboard-character-p') M
+                                                div(class="tool-img-div toolbar-btn")
+                                                    img(id="microphone-mute-btn" src="/images/ui-controls/microphone-muted-sml-1.png" class="microphone-btn")
+
+                                            // Mic ON icon.
+                                            div(class="device-settings mic-btn-div" id="mic-unmute-div" title="Mute microphone")
+                                                div(class='fps-controls-keyboard-character-div toolbar-btn' title="Press the 'M' key to UNMUTE the microphone")
+                                                    p(class='fps-controls-keyboard-character-p') M
+                                                div(class="tool-img-div toolbar-btn")
+                                                    img(id="microphone-btn" src="/images/ui-controls/microphone-sml-1.png" class="microphone-btn")
+                                        td(class="button-row-td")
+                                            // Camera ON icon.
+                                            div(class="device-settings vidcam-btn-div" id="vidcam-on-div" title="Turn OFF camera")
+                                                div(class='fps-controls-keyboard-character-div toolbar-btn' title="Press the 'V' key to turn ON your camera")
+                                                    p(class='fps-controls-keyboard-character-p') V
+                                                div(class="tool-img-div toolbar-btn")
+                                                    img(id="video-camera-on-btn" src="/images/ui-controls/video-camera-green-on-sml-1.png" class="video-camera-btn")
+
+                                            // Camera OFF icon.
+                                            div(class="device-settings vidcam-btn-div" id="vidcam-off-div" title="Turn ON camera")
+                                                div(class='fps-controls-keyboard-character-div toolbar-btn' title="Press the 'V' key to turn OFF your camera")
+                                                    p(class='fps-controls-keyboard-character-p') V
+                                                div(class="tool-img-div toolbar-btn")
+                                                    img(id="video-camera-btn" src="/images/ui-controls/video-camera-grey-off-sml-1.png" class="video-camera-btn")
+
+                                        td(class="button-row-td")
+                                            // Show Device Settings dialog.
+                                            div(class="device-settings" id="device-settings-div" title="Device settings")
+                                                img(id="device-settings-btn" src="/images/ui-controls/device-settings.png" class="device-settings-btn")
+
+    // This is the DIV we pop up to let the user select the devices they want
+        to use for audio and video.  Initially it is hidden.
+    div(id="devices-floating-div" class="floating-div hide-float-form-div")
+        table(id="devices-floating-table")
+            tbody
+                tr(id="audio-input-devices-tr" class="button-row-tr")
+                    td(class="button-row-td")
+                        // Select microphone to use.
+                        div(class="video-options")
+                            label(for="audio-input-devices-select") Select microphone
+                            select(name="" id="audio-input-devices-select" class="custom-select" class='persistent-field')
+                                option(value="") Select microphone
+                tr(id="audio-output-devices-tr" class="button-row-tr")
+                    td(class="button-row-td")
+                        // Select microphone to use.
+                        div(class="video-options")
+                            label(for="audio-output-devices-select") Select speakers or headphones
+                            select(name="" id="audio-output-devices-select" class="custom-select" class='persistent-field')
+                                option(value="") Select speakers
+                tr(id="camera-devices-tr" class="button-row-tr")
+                    td(class="button-row-td")
+                        // Select the camera to use.
+                        div(class="video-options")
+                            label(for="video-input-devices-select") Select camera
+                            select(name="" id="video-input-devices-select" class="custom-select" class='persistent-field')
+                                option(value="") Select camera
+
+    // This DIV contains elements needed by the code but that don't need
+        to be visible to the user.
+    div(id="hidden-elements-div")
+        div(class="my-text-class")
+            div(class="my-text-class-prepend")
+                div(class="my-text-class-text" id="btnGroupAddon") Enter Conference Name:
+            input(type="text" id="alias-input" class="form-control" placeholder="" aria-label="Enter conference name" aria-describedby="btnGroupAddon")
+
+    // The DIV that ThreeJS will render into.
+    div(id="threejs-canvas-div")
+
+    // The DIV that is shown to the user before they enter the 3D world, before the world is loaded and is ready.
+    div(id="waiting-room-div-1" class="waiting-room center-screen-2")
+        img(id="waiting-room-img-1" src="/images/ui-controls/loading-neo3d-live.png" class="waiting-room")
+    // The DIV that is shown to the user before they enter the 3D world, after the world is loaded and is ready to be entered..
+    div(id="waiting-room-div-2" class="waiting-room center-screen-2")
+        img(id="waiting-room-img-2" src="/images/ui-controls/enter-neo3d-live-with-button.png" class="waiting-room")
+
+    // UNUSED SCREEN ELEMENTS.
+        div(id="unused-buttons-div")
+            // Copy Conference link button.
+            td(class="button-row-td")
+                // Copy conference link.
+                div(class="")
+                    div(class="copy-join-link my-text-class")
+                        img(src="icons/copy-link.svg" id="copy-join-link")
+                    div(class="copy-join-link mx-auto d-block my-text-class" id="copy-join-link-msg") Copy Join URL
+
+            // Old instructions DIV.
+            td
+                div(id="instructions-div")
+                    p(style="font-size:36px")
+                        | Click to play
+                    p
+                        | Move: WASD
+                        br
+                        | Jump: SPACE
+                        br
+                        | Look: MOUSE
+                        br
+        tr(id="threejs-canvas-row")
+            td
+                div(id="threejs-canvas")
+                        | Make new box: B
+                        br
+            // Conference name.
+            td(class="button-row-td")
+                div(class="my-text-class")
+                    div(class="my-text-class-prepend")
+                        div(class="my-text-class-text" id="btnGroupAddon") Enter Conference Name:
+                    input(type="text" id="alias-input" class="form-control" placeholder="" aria-label="Enter conference name" aria-describedby="btnGroupAddon")
+
+                // Direct spatial position entry.
+                td(class="button-row-td")
+                    // ROS: Raw spatial position entry
+                    div(class="my-text-class")
+                        div(class="my-text-class-prepend")
+                            div(class="my-text-class-text" id="btnEnterXPos") X Pos:
+                        input(ype="text" id="input-x-pos" class="form-control" placeholder="" aria-label="Enter X position" aria-describedby="btnEnterXPos")
+
+            tr(id="selected-participant-tr" class="button-row-tr")
+                // ROS: Selected participant
+                td(class="button-row-td")
+                    div(class="my-text-class")
+                        div(class="my-text-class-prepend")
+                            span(class="my-text-class-text" id="selected-participant-label") Selected participant: (none):
+                        select(id="selected-participant-select")
+            tr(class="button-row-tr")
+                // ROS: Test button
+                td(class="button-row-td")
+                    div(class="conference-btns")
+                        div(class="test" id="test-btn")
+                            img(src="icons/btn-animatedclock-black.svg" class="mx-auto d-block")
+                            div(style="color: white;") TEST
+
+                td(class="button-row-td")
+                    div(class="" id="name-message")
+
+                // Camera ON/OFF
+                td(class="button-row-td")
+                    div(class="conference-btns")
+                        div(class="row mx-auto d-block")
+                            div(id="camera-icon-container")
+                                div(class="camera-off" id="stop-video-btn")
+                                    img(src="icons/btn-camera-off.svg" class="mx-auto d-block" id="btn-camera-off-icon")
+                                div(class="camera-on" id="start-video-btn")
+                                    img(src="icons/btn-camera-on.svg" class="mx-auto d-block" id="btn-camera-on-icon")
+                                div(id="camera-msg" style="color: white;") Camera Off
+
+            tr(class="button-row-tr")
+                // ROS: Join/Leave conference.
+                td(class="button-row-td")
+                    // More conference related buttons.
+                    div(class="row conference-btns my-text-class")
+                        div(class="join" id="join-btn")
+                            img(src="icons/btn-join.svg" class="mx-auto d-block")
+                            div(style="color: white;") Join Conference
+                        div(class="leave" id="leave-btn")
+                            img(src="icons/btn-leave.svg" class="mx-auto d-block")
+                            div(style="color: white;") Leave Conference)
