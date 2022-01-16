@@ -20,23 +20,44 @@ import {
     g_PictureDisplayManager
 } from "../../objects/picture-display.js";
 import {
-    g_ThreeJsRaycaster,
+    // g_ThreeJsRaycaster,
+    g_AnimationMixers,
+    g_ClipActions,
     g_ThreeJsCamera,
+    g_ThreeJsObjects,
     g_ThreeJsScene,
     g_ThreeJsRenderer,
     g_ThreeJsControls,
-    assignThreeJsCamera, assignThreeJsScene, assignThreeJsControls, assignThreeJsRaycaster, assignThreeJsRenderer
+    assignThreeJsCamera,
+    assignThreeJsScene,
+    assignThreeJsControls,
+    assignThreeJsRaycaster,
+    assignThreeJsRenderer,
 } from "../../objects/three-js-global-objects.js";
 import {g_AryBooths} from "../../booths/world-content.js";
 import * as THREEJSSUPPORT from "../../threejs-support/threejs-support-code.js";
 import {
-    cardinalDirectionToRotation,
+    cardinalDirectionToRotation, Dimensions2D,
     getBoundingBoxOfThreeJsObject,
-    rotateCardinalDirFromBaseDir, WORLD_AXIS_Y
+    rotateCardinalDirFromBaseDir, vec3ToString, WORLD_AXIS_Y
 } from "../../threejs-support/threejs-support-code.js";
 import {g_BoothManager} from "../../booths/booth-manager.js";
+import {DirectPlayAudio} from "../../audio-direct/direct-play-audio.js";
+import {GLTFLoader} from "./jsm/loaders/GLTFLoader.js";
+import {DRACOLoader} from "./jsm/loaders/DRACOLoader.js";
+import { EXRLoader } from './jsm/loaders/EXRLoader.js';
+import {RGBELoader} from "./jsm/loaders/RGBELoader.js";
+import {g_GlobalState} from "../../objects/global-state.js";
+
+// import { ThreeJsReflector } from "../../threejs-support/threejs-reflector-as-module.js";
 
 const bVerbose = true;
+
+const SERVER_BASE_URL = "/javascripts/booths";
+// const S3_BASE_URL = 'https://neo3d-live.s3.amazonaws.com/booths-1/public/booths';
+const S3_BASE_URL = 'https://d2gu5htr6mst1o.cloudfront.net/booths-1/public/booths';
+
+let theGroundMirror;
 
 /**
  * Dump the position and orientation given to the console.
@@ -57,16 +78,12 @@ function dumpPositionAndOrientation(theLabel, position, orientation) {
         throw new Error(errPrefix + `The value in the orientation parameter is not a THREE.Vector3 object.`);
 
     // TODO: Diagnostic code.
-    console.info(`${errPrefix}Setting position of sound belonging to object(${theLabel}) to:  `);
-    console.info(errPrefix + `position object:`);
-    console.dir(position, {depth: null, colors: true});
+    const positionStr = vec3ToString(position);
+    console.info(`${errPrefix}Setting position of sound belonging to object(${theLabel}) to: ${positionStr}.`);
 
-    console.info(`${errPrefix}Setting orientation of sound belonging to picture display(${theLabel}) to:   `);
-    console.info(errPrefix + `orientation:`);
-    console.dir(orientation, {depth: null, colors: true});
+    const orientationStr = vec3ToString(orientation);
+    console.info(`${errPrefix}Setting orientation of sound belonging to picture display(${theLabel}) to ${orientationStr}.`);
 }
-
-const g_ThreeJsObjects = [];
 
 // const vertex = new THREE.Vector3();
 // const color = new THREE.Color();
@@ -130,6 +147,8 @@ function buildSimpleTelevision(idOfTelevisionDisplay, videoUrl, position, rotati
  *  object will be automatically adjusted to maintain a 4:3 aspect ratio
  *  for the side that shows the picture!
  *
+ * @param {Object|null} boothJsonObj - The JSON booth object for the booth this picture
+ *  belongs to.  May be NULL if the object is not inside a booth.
  * @param {String} idOfPictureDisplay - The ID of the picture display.
  * @param {String} srcUrlPicture - The URL of the picture to display.
  * @param {THREE.Vector3} position3D - The XYZ position of the picture display.
@@ -139,25 +158,44 @@ function buildSimpleTelevision(idOfTelevisionDisplay, videoUrl, position, rotati
  * @param {String} surfaceName - The name of the surface that
  *  determines the direction the picture display will point to.
  *  E.g. - 'neg_x' will make the picture display face left.
- * @param {Number} widthOfPicture - The width of the surface that
- *  will show the picture.  The height will be automatically adjusted
- *  to keep a 4:3 aspect ratio.
+ * @param {Number|Dimensions2D} widthOfPictureOrDim2D - The width of the
+ *  surface that will show the picture OR a Dimensions2D object.  IF
+ *  it is not a Dimensions2D object, then The height will be automatically
+ *  for the picture will be automatically calculated in accordance
+ *  with a 4:3 aspect ratio.
+ * @param {Boolean} bAutoAdjustY - If TRUE, the Y position of the
+ *  picture display will be adjusted so that it is not half-way
+ *  below the ground.  If FALSE, it will be left alone.
  * @param {String} [srcUrlSound] - The URL of the sound to play. Optional.
  * @param {Boolean} bIsLooped - Whether the sound is looped. Optional.
  * @param {Boolean} bIsStoppedWhenDeactivated - Whether the sound is stopped
  *  when the picture display is deactivated. Optional.
+ * @param {Boolean} bIsDirectPlay - If TRUE, then the sound will be played
+ *  directly via the browser Audio() object..  If FALSE, then the sound will
+ *  be played via Howler.  Direct play is useful when you want a sound to
+ *  be really loud and present, and you don't care about audio positioning.
+ * @param {String} [urlToPortal] - If provided, then when the user approaches
+ * the picture, the browser will load teh URL given.
  *
  * @returns {PictureDisplay} - Returns the PictureDisplay object that was created.
  */
 function buildSimplePictureWithSound(
+    boothJsonObj,
     idOfPictureDisplay,
     srcUrlPicture,
     position3D,
     rotationEuler3D,
     surfaceName,
-    widthOfPicture,
-    srcUrlSound=null, bIsLooped=false, bIsStoppedWhenDeactivated=true) {
+    widthOfPictureOrDim2D,
+    bAutoAdjustY=true,
+    srcUrlSound=null, bIsLooped=false, bIsStoppedWhenDeactivated=true, bIsDirectPlay=false,
+    urlToPortal) {
     const errPrefix = `(buildSimplePictureWithSound) `;
+
+    if (boothJsonObj !== null) {
+        if (!misc_shared_lib.isNonNullObjectAndNotArray(boothJsonObj))
+            throw new Error(errPrefix + `The value in the boothGroupObj parameter is not NULL, yet it is not of type OBJECT either.`);
+    }
 
     if (misc_shared_lib.isEmptySafeString(idOfPictureDisplay))
         throw new Error(errPrefix + `The idOfPictureDisplay parameter is empty.`);
@@ -173,19 +211,36 @@ function buildSimplePictureWithSound(
 
     if (!THREEJSSUPPORT.isValidSurfaceName(surfaceName))
         throw new Error(errPrefix + `The surfaceName parameter is not a valid surface name: ${surfaceName}.`);
-    if (typeof widthOfPicture !== 'number')
-    	throw new Error(errPrefix + `The value in the widthOfPicture parameter is not a number.`);
-    if (widthOfPicture < 0)
-        throw new Error(errPrefix + `The value in the widthOfPicture parameter is negative: ${widthOfPicture}.`);
-    if (widthOfPicture === 0)
-        throw new Error(errPrefix + `The value in the widthOfPicture parameter is zero.`);
+    if (typeof widthOfPictureOrDim2D == 'number') {
+        // throw new Error(errPrefix + `The value in the widthOfPicture parameter is not a number.`);
+        if (widthOfPictureOrDim2D < 0)
+            throw new Error(errPrefix + `The value in the widthOfPicture parameter is negative: ${widthOfPictureOrDim2D}.`);
+        if (widthOfPictureOrDim2D === 0)
+            throw new Error(errPrefix + `The value in the widthOfPicture parameter is zero.`);
+    } else {
+        // If the width is not a number, then it must be a Dimensions2D object.
+        //  That object validated the width and height values it contains
+        //  in its constructor.
+        if (!(widthOfPictureOrDim2D instanceof Dimensions2D))
+            throw new Error(errPrefix + `The widthOfPicture parameter is not a number or a Dimensions2D object.`);
+    }
+
+    if (typeof bAutoAdjustY !== 'boolean')
+        throw new Error(errPrefix + `The value in the bAutoAdjustY parameter is not Boolean.`);
 
     if (srcUrlSound && typeof srcUrlSound !== 'string')
         throw new Error(errPrefix + `The value in the srcUrlSound parameter is not NULL, yet it is not a string either.`);
     if (typeof bIsLooped !== 'boolean')
-    	throw new Error(errPrefix + `The value in the bIsLooped parameter is not boolean.`);
+        throw new Error(errPrefix + `The value in the bIsLooped parameter is not boolean.`);
     if (typeof bIsStoppedWhenDeactivated !== 'boolean')
-    	throw new Error(errPrefix + `The value in the bIsStoppedWhenDeactivated parameter is not boolean.`);
+        throw new Error(errPrefix + `The value in the bIsStoppedWhenDeactivated parameter is not boolean.`);
+    if (typeof bIsDirectPlay !== 'boolean')
+    	throw new Error(errPrefix + `The value in the bIsDirectPlay parameter is not boolean.`);
+
+    if (urlToPortal) {
+        if (misc_shared_lib.isEmptySafeString(urlToPortal))
+            throw new Error(errPrefix + `The urlToPortal parameter is empty.`);
+    }
 
     // const rotation = surfaceNameToRotation(surfaceName);
 
@@ -196,39 +251,83 @@ function buildSimplePictureWithSound(
     // Just put a picture on the negative Z face of the cube.
     pictureDisplayContents.neg_z = srcUrlPicture;
 
-    // Derive the height of the picture display from the width
-    //  using a 4:3 aspect ratio.
-    const heightFromWidth_4_3 = widthOfPicture * 3 / 4;
+    // If the widthOfPictureOrDim2D value is not a Dimensions2D
+    //  object, then it contains the desired width.  Otherwise use
+    //  the width value from the Dimensions2D object.
+    const widthOfPicture =
+        widthOfPictureOrDim2D instanceof Dimensions2D ? widthOfPictureOrDim2D.width : widthOfPictureOrDim2D ;
 
-    // Adjust the Y value so that we don't end up with half the
-    //  picture under the floor.
-    const adjY = position3D.y + heightFromWidth_4_3 / 2;
-    position3D.y += adjY;
+    // If the widthOfPictureOrDim2D value is not a Dimensions2D
+    //  object, then derive the height of the picture display
+    //  from the widthOfPictureOrDim2D value using a 4:3 aspect
+    //  ratio.  Otherwise use the height value from the
+    //  Dimensions2D object.
+    const heightOfPicture =
+        widthOfPictureOrDim2D instanceof Dimensions2D ? widthOfPictureOrDim2D.height : widthOfPictureOrDim2D * 3 / 4;
+
+    // Auto-adjust the Y value?
+    if (bAutoAdjustY) {
+        // Adjust the Y value so that we don't end up with half the
+        //  picture under the floor.
+        const adjY = position3D.y + heightOfPicture / 2;
+        position3D.y += adjY;
+    }
 
     // ---------------------------- SOUND ----------------------------
 
     // The sound URL is optional.
-    let soundToPlay = null;
-    let funcActivateSound = null;
-    let funcDeactivateSound = null;
+    let soundToPlayObj = null;
+    let directSoundPlayObj = null;
 
     const newPictureDisplayObj = g_PictureDisplayManager.addPictureDisplay(
         idOfPictureDisplay,
         pictureDisplayContents,
         position3D,
         rotationEuler3D,
-        new THREE.Vector3(widthOfPicture, heightFromWidth_4_3, 1));
+        new THREE.Vector3(widthOfPicture, heightOfPicture, 1));
 
+    // TODO: Adjust code so we can have BOTH a sound and a portal URL.
+    //  Right now it's one or the other.
+
+    // Do we have a portal URL?
+    if (urlToPortal) {
+        // Tell the browser to load the new URL.
+        newPictureDisplayObj.funcActivate = () => {
+            // Set the flag that tells the animation loop to stop rendering,
+            //  to make the portal transition look seamless.
+            g_GlobalState.setRenderDisableFlag();
+            console.info(`${errPrefix}Portaling to URL: ${urlToPortal}.`)
+            window.location.replace(urlToPortal);
+        }
+    }
     // Do we have a sound URL?
-    if (!misc_shared_lib.isEmptySafeString(srcUrlSound)) {
-        // Build a Howler object that will be tied to the picture display's
-        //  ThreeJS avatar.
-        soundToPlay = g_SoundPlayedByHowlerManager.addHowlerSound(srcUrlSound, newPictureDisplayObj.threeJsAvatar, idOfPictureDisplay, bIsLooped, bIsStoppedWhenDeactivated);
+    else if (!misc_shared_lib.isEmptySafeString(srcUrlSound)) {
+        //  If we are in a booth, then resolve the sound
+        //  URL against the booth path.  Otherwise, just use what was given
+        //  to us.
+        const useSoundUrl = boothJsonObj === null ? srcUrlSound : resolveBoothUrl(boothJsonObj, srcUrlSound);
 
-        // Use it's activate and deactivate functions as the picture display's
-        //  activate and deactivate functions.
-        newPictureDisplayObj.funcActivate = soundToPlay.notifyActivated;
-        newPictureDisplayObj.funcDeactivate = soundToPlay.notifyDeactivated;
+        // Direct play desired?
+        if (bIsDirectPlay) {
+            // Yes, direct play is desired.  Use the browser
+            //  native Audio() object to play the sound.
+            directSoundPlayObj = new DirectPlayAudio(useSoundUrl);
+
+            // Use it's activate and deactivate functions as the picture display's
+            //  activate and deactivate functions.
+            newPictureDisplayObj.funcActivate = directSoundPlayObj.notifyActivated;
+            newPictureDisplayObj.funcDeactivate = directSoundPlayObj.notifyDeactivated;
+        } else {
+            // No, direct play not desired.  Use Howler to play
+            //  the sound.  Build a Howler object that will be tied
+            //  to the picture display's ThreeJS avatar.
+            soundToPlayObj = g_SoundPlayedByHowlerManager.addHowlerSound(useSoundUrl, newPictureDisplayObj.threeJsAvatar, idOfPictureDisplay, bIsLooped, bIsStoppedWhenDeactivated);
+
+            // Use it's activate and deactivate functions as the picture display's
+            //  activate and deactivate functions.
+            newPictureDisplayObj.funcActivate = soundToPlayObj.notifyActivated;
+            newPictureDisplayObj.funcDeactivate = soundToPlayObj.notifyDeactivated;
+        }
     }
 
     return newPictureDisplayObj;
@@ -252,7 +351,7 @@ function makeBoxInScene() {
     box.position.z = Math.floor(Math.random() * 20 - 10) * 20;
 
     // ROS: Add the box to the scene and to the objects array.
-    addObjectToScene(box);
+    addObjectToObjectsList(box);
 }
 
 /**
@@ -273,7 +372,7 @@ function makeBoxInScene_original() {
     box.position.z = Math.floor(Math.random() * 20 - 10) * 20;
 
     // ROS: Add the box to the scene and to the objects array.
-    addObjectToScene(box);
+    addObjectToObjectsList(box);
 }
 
 // The number of random boxes to automatically add to the g_ThreeJsScene.
@@ -310,33 +409,43 @@ function setRendererSize() {
  *  JSON data so that is relative to a base directory
  *  that includes the booth's ID.
  *
- * @param {Object} boothObj - The booth object.
+ * @param {Object} boothJsonObj - The raw JSON booth object.
  * @param {String} url - The URL to adjust.
  *
  * @return {string} - Returns a URL based off of the
  *  based directory made from the booth's ID.
  */
-function resolveBoothUrl(boothObj, url) {
+function resolveBoothUrl(boothJsonObj, url) {
     const errPrefix = `(resolveBoothUrl) `;
 
-    if (!misc_shared_lib.isNonNullObjectAndNotArray(boothObj))
-    	throw new Error(errPrefix + `The boothObj is not a valid object.`);
+    if (!misc_shared_lib.isNonNullObjectAndNotArray(boothJsonObj))
+        throw new Error(errPrefix + `The boothJsonObj is not a valid object.`);
 
-    if (misc_shared_lib.isEmptySafeString(boothObj.id))
+    if (misc_shared_lib.isEmptySafeString(boothJsonObj.id))
         throw new Error(errPrefix + `The boothObj.id field is empty.`);
 
     if (misc_shared_lib.isEmptySafeString(url))
         throw new Error(errPrefix + `The url parameter is empty.`);
 
-    const boothIdFormatted = boothObj.id.trim().toLowerCase();
+    let boothIdFormatted = boothJsonObj.id.trim().toLowerCase();
 
-    // Adjust for URLs that start with a backslahs.
+    // If an alias field was provided, use that instead of the booth
+    //  ID as the project root dir.
+    if (boothJsonObj.alias) {
+        boothIdFormatted = boothJsonObj.alias.trim().toLowerCase();
+    }
+
+    // Adjust for URLs that start with a backslashes.
     const url_2 = url.startsWith(`/`) ? url.substring(1) : url;
 
-    // The URL is adorned to create the following format:
-    //
-    //   '/javascripts/booths/{booth_id}/{relative URL in booth JSON}'
-    return `/javascripts/booths/${boothIdFormatted}/${url_2}`;
+    // TODO: The open source version should not have the S3 bucket usage.
+
+    // TODO: Find out why images being on S3 are not working.
+    // Only videos and HDRI files are on S3.  Images end up rendering as missing.
+    if (url_2.endsWith('.mp4') || url_2.endsWith('.hdr'))
+        return `${S3_BASE_URL}/${boothIdFormatted}/${url_2}`;
+    else
+        return `${SERVER_BASE_URL}/${boothIdFormatted}/${url_2}`;
 }
 
 /**
@@ -380,104 +489,187 @@ function buildOneBooth(boothJsonObj) {
 
     // -------------------- BEGIN: WALLS ------------
 
-    // Create the walls by creating a picture display object for each wall.
+    if (boothJsonObj.walls.back.length < 1)
+        throw new Error(`${errPrefix}The booth object has no back walls.`);
+
+    // Calculate in advance the entire length of the booth's aggregate back wall.
+    let sumBackWallsLength = 0;
+
+    boothJsonObj.walls.back.forEach(jsonBackWallObj => {
+        sumBackWallsLength += jsonBackWallObj.size;
+    });
+
+    // Process the back walls array first so we know the total length
+    //  of the back of the booth.
+    let numBackWalls = 0;
+
+    const firstBackWallJsonObj = boothJsonObj.walls.back[0];
+    const lastBackWallJsonObj = boothJsonObj.walls.back[boothJsonObj.walls.back - 1];
+
+    // Adjust the back wall's position to be relative to the booth's
+    //  center.
     //
-    // >>>>> OBJECT: Back wall 1
-    const backWallObj_1 = buildSimplePictureWithSound(
-        `${boothJsonObj.id}-back-wall-1`,
-        resolveBoothUrl(boothJsonObj, boothJsonObj.walls.back_1.url),
-        new THREE.Vector3(
-            boothJsonObj.walls.back_1.x,
-            boothJsonObj.walls.back_1.y,
-            boothJsonObj.walls.back_1.z),
-        // Before adjustment, the back wall faces south.
-        THREEJSSUPPORT.cardinalDirectionToEuler3D('south'),
-        // Paint the picture on the surface that faces the default cardinal direction.
-        THREEJSSUPPORT.extendedCardinalDirToSurfaceName(THREEJSSUPPORT.DEFAULT_CARDINAL_DIRECTION),
-        boothJsonObj.walls.back_1.size,
-        null
-    );
+    // First, determine where the far left edge of the booth will be in the X direction.
+    // const farLeftEdgeX = boothOriginX - (sumBackWallsLength / 2);
+    const farLeftEdgeX = -(sumBackWallsLength / 2);
+    let backWallX = farLeftEdgeX;
 
-    // Add it's avatar object to the booth group object.
-    boothGroupObj.add(backWallObj_1.threeJsAvatar);
+    // Compensate for the first wall's center.
+    backWallX += (firstBackWallJsonObj.size / 2);
 
-    // Get the bounding boxes for back wall 1.
-    const backWallOneBoundingBox_1 = getBoundingBoxOfThreeJsObject(backWallObj_1.threeJsAvatar, true);
+    let firstBackWallX = 0;
+    let lastBackWallSize = 0;
+    // let previousBackWallBoundingBox = null;
+    // let currentBackWallOneBoundingBox = null;
 
-    // Calculate the position of back wall 1's right edge.
-    const backWallOneRightEdgeX = backWallOneBoundingBox_1.max.x;
+    let firstBackWallObj = null;
+    let lastBackWallObj = null;
 
-    // >>>>> OBJECT: Back wall 2.  Positioned to the right of the back wall 1.
-    const backWallObj_2 = buildSimplePictureWithSound(
-        `${boothJsonObj.id}-back-wall-2`,
-        resolveBoothUrl(boothJsonObj, boothJsonObj.walls.back_2.url),
-        new THREE.Vector3(
-            // Position it at the right edge of back wall 1 and compensate
-            //  for the center of the back wall 1.
-            backWallOneRightEdgeX + (boothJsonObj.walls.back_2.size / 2),
-            boothJsonObj.walls.back_2.y,
-            boothJsonObj.walls.back_2.z),
-        // Before adjustment, the back wall faces south.
-        THREEJSSUPPORT.cardinalDirectionToEuler3D('south'),
-        // Paint the picture on the surface that faces the default cardinal direction.
-        THREEJSSUPPORT.extendedCardinalDirToSurfaceName(THREEJSSUPPORT.DEFAULT_CARDINAL_DIRECTION),
-        boothJsonObj.walls.back_2.size,
-        null
-    );
+    boothJsonObj.walls.back.forEach(jsonBackWallObj => {
+        numBackWalls++;
 
-    // Add it's avatar object to the booth group object.
-    boothGroupObj.add(backWallObj_2.threeJsAvatar);
+        // Create the wall by creating a picture display object for each wall.
+        const backWallObj = buildSimplePictureWithSound(
+            boothJsonObj,
+            `${boothJsonObj.id}-back-wall-${numBackWalls}`,
+            resolveBoothUrl(boothJsonObj, jsonBackWallObj.url),
+            new THREE.Vector3(
+                backWallX,
+                jsonBackWallObj.y,
+                jsonBackWallObj.z),
+            // Before adjustment, the back wall faces north.
+            THREEJSSUPPORT.cardinalDirectionToEuler3D('north'),
+            // Paint the picture on the surface that faces the default cardinal direction.
+            THREEJSSUPPORT.extendedCardinalDirToSurfaceName(THREEJSSUPPORT.DEFAULT_CARDINAL_DIRECTION),
+            jsonBackWallObj.size
+        );
 
-    // Get the bounding boxes for back wall 2.
-    const backWallTwoBoundingBox = getBoundingBoxOfThreeJsObject(backWallObj_2.threeJsAvatar, true);
+        // Add it's avatar object to the booth group object.
+        boothGroupObj.add(backWallObj.threeJsAvatar);
 
-    // Calculate the position of back wall 2's right edge.
-    const backWallTwoRightEdgeX = backWallTwoBoundingBox.max.x;
+        // Add it to the list of world objects.
+        addObjectToObjectsList(backWallObj.threeJsAvatar);
 
-    // >>>>> OBJECT: Side_1 wall - face NORTH initially.
+        // If we have a banner image, add it at the top of the booth and
+        //  centered.
+        if (boothJsonObj.banner_image && boothJsonObj.banner_image.url) {
+            // Derive a good height (Y value) for the banner's picture display from the wall size
+            //  using a 4:3 aspect ratio.
+            // const heightFromWidth_4_3 = jsonBackWallObj.size * 3 / 4;
+
+            const bannerZ = -( Math.trunc(0.9 * boothJsonObj.walls.side_1.size));
+
+            const bannerObj = buildSimplePictureWithSound(
+                boothJsonObj,
+                `${boothJsonObj.id}-banner-${numBackWalls}`,
+                resolveBoothUrl(boothJsonObj, boothJsonObj.banner_image.url),
+                new THREE.Vector3(
+                    backWallX,
+                    // TODO: Derive the banner Y coordinate algorithmically.
+                    16,
+                    bannerZ),
+                // Before adjustment, the back wall faces north.
+                THREEJSSUPPORT.cardinalDirectionToEuler3D('north'),
+                // Paint the picture on the surface that faces the default cardinal direction.
+                THREEJSSUPPORT.extendedCardinalDirToSurfaceName(THREEJSSUPPORT.DEFAULT_CARDINAL_DIRECTION),
+                30
+            );
+
+            // Add the object to the group.
+            boothGroupObj.add(bannerObj.threeJsAvatar);
+
+            // Add it to the list of world objects.
+            addObjectToObjectsList(bannerObj.threeJsAvatar);
+        }
+
+        if (numBackWalls === 1) {
+            firstBackWallX = backWallX;
+        }
+
+        // Calculate the next back wall's X coordinate by adding the length of the
+        //  current back wall to the current sum.
+        backWallX += jsonBackWallObj.size;
+
+        console.info(`${errPrefix}[back wall #${numBackWalls}] Back wall X: ${backWallX}`);
+
+        lastBackWallSize = jsonBackWallObj.size;
+        firstBackWallObj = backWallObj;
+        lastBackWallObj = backWallObj;
+    });
+
+    // We must have a first and a last back wall.
+    if (!firstBackWallObj)
+        throw new Error(`${errPrefix}The first back wall object is null.`);
+    if (!lastBackWallObj)
+        throw new Error(`${errPrefix}The last back wall object is null.`);
+
+    // Get the bounding box for the first back wall.
+    // const backWallOneBoundingBox_1 = getBoundingBoxOfThreeJsObject(firstBackWallObj.threeJsAvatar, true);
+
+    // Calculate the position of back that wall's right edge.
+    // const backWallOneRightEdgeX = backWallOneBoundingBox_1.max.x;
+
+    // Get the bounding box for the first back wall.
+    const firstBackWallBoundingBox = getBoundingBoxOfThreeJsObject(firstBackWallObj.threeJsAvatar, true);
+
+    // Get the bounding box for the last back wall.
+    const lastBackWallBoundingBox = getBoundingBoxOfThreeJsObject(lastBackWallObj.threeJsAvatar, true);
+
+    // Calculate the position of the last back wall's right edge.
+    // const lastBackWallRightEdgeX = lastBackWallBoundingBox.max.x;
+
+    const sideWallsZ = -(1/2 * boothJsonObj.walls.side_1.size);
+
+    // >>>>> OBJECT: Side_1 wall - faces NORTH initially.
     const sideWallOneObj = buildSimplePictureWithSound(
+        boothJsonObj,
         `${boothJsonObj.id}-side-wall-1`,
         resolveBoothUrl(boothJsonObj, boothJsonObj.walls.side_1.url),
         // Position the first side wall at the left edge of the first
         //  back wall, which is the same as the origin X of the booth.
         //  Adjust for the center of side wall 1.
         new THREE.Vector3(
-            // backWallTwoRightEdgeX + (boothJsonObj.walls.back_2.size / 2),
-            boothOriginX - (boothJsonObj.walls.back_2.size / 4),
+            farLeftEdgeX,
             boothOriginY,
-            boothOriginZ - (boothJsonObj.walls.side_1.size / 4)),
+            sideWallsZ), // boothOriginZ - (boothJsonObj.walls.side_1.size / 4)),
         // Before adjustment, side wall 1 faces west.
         THREEJSSUPPORT.cardinalDirectionToEuler3D('west'),
         // Paint the picture on the surface that faces the default cardinal direction.
         THREEJSSUPPORT.extendedCardinalDirToSurfaceName(THREEJSSUPPORT.DEFAULT_CARDINAL_DIRECTION),
-        boothJsonObj.walls.side_1.size,
-        null
+        boothJsonObj.walls.side_1.size
     );
 
     // Add it's avatar object to the booth group object.
     boothGroupObj.add(sideWallOneObj.threeJsAvatar);
 
+    // Add it to the list of world objects.
+    addObjectToObjectsList(sideWallOneObj.threeJsAvatar);
+
+
     // >>>>> OBJECT: Side_2 wall - initially faces NORTH before adjustment.
     const sideWallTwoObj = buildSimplePictureWithSound(
+        boothJsonObj,
         `${boothJsonObj.id}-side-wall-2`,
         resolveBoothUrl(boothJsonObj, boothJsonObj.walls.side_2.url),
-        // Position the second side wall at the maximum X for back wall 2
+        // Position the second side wall at the maximum X for the last back wall
         //  and apply the same adjustments.
         new THREE.Vector3(
-            backWallTwoRightEdgeX,
+            backWallX - (lastBackWallSize / 2),
             boothOriginY,
-            boothOriginZ - (boothJsonObj.walls.side_1.size / 4),
+            sideWallsZ // boothOriginZ - (boothJsonObj.walls.side_1.size / 4),
         ),
         // Before adjustment, side wall 2 faces east.
         THREEJSSUPPORT.cardinalDirectionToEuler3D('east'),
         // Paint the picture on the surface that faces the default cardinal direction.
         THREEJSSUPPORT.extendedCardinalDirToSurfaceName(THREEJSSUPPORT.DEFAULT_CARDINAL_DIRECTION),
-        boothJsonObj.walls.side_2.size,
-        null
+        boothJsonObj.walls.side_2.size
     );
 
     // Add it's avatar object to the booth group object.
     boothGroupObj.add(sideWallTwoObj.threeJsAvatar);
+
+    // Add it to the list of world objects.
+    addObjectToObjectsList(sideWallTwoObj.threeJsAvatar);
 
     // -------------------- END  : WALLS ------------
 
@@ -495,37 +687,53 @@ function buildOneBooth(boothJsonObj) {
 
         let urlToSound = null;
         let isSoundLooped = false;
+        let isDirectPlay = false;
+        let isStoppedWhenDeactivated = false;
 
         if ('sound' in picture) {
             if (misc_shared_lib.isEmptySafeString(picture.sound.url))
                 throw new Error(`${errPrefix}The picture at index(${pictureNum}) has an empty sound URL.`);
 
             urlToSound = picture.sound.url.trim();
+
+            // Set flags specified for the sound in the JSON file.
             if ('is_looped' in picture.sound)
-                isSoundLooped = picture.sound.is_looped.trim().toLowerCase() === 'true';
+                isSoundLooped = picture.sound.is_looped;
+            if ('direct_play' in picture.sound)
+                isDirectPlay = picture.sound.direct_play;
+            if ('stop_when_deactivated' in picture.sound)
+                isStoppedWhenDeactivated = picture.sound.stop_when_deactivated;
         }
 
         // Create a picture display object for each picture.
         const pictureObj = buildSimplePictureWithSound(
+            boothJsonObj,
             picture.id,
             resolveBoothUrl(boothJsonObj, picture.url),
-            // The picture must be offset the booth's origin.
+            // The picture must be offset the booth's far left edge.
             new THREE.Vector3(
-                boothOriginX + picture.location.x,
+                farLeftEdgeX + picture.location.x,
                 boothOriginY + picture.location.y,
-                boothOriginZ + picture.location.z),
+                picture.location.z),
             // The picture initially faces the orientation specified in the JSON
             //  file.
-            THREEJSSUPPORT.cardinalDirectionToEulerAngle(picture.facing),
+            THREEJSSUPPORT.cardinalDirectionToEuler3D(picture.facing),
             // Paint the picture on the surface that faces the default cardinal direction.
             THREEJSSUPPORT.extendedCardinalDirToSurfaceName(THREEJSSUPPORT.DEFAULT_CARDINAL_DIRECTION),
             picture.size,
+            true,
             urlToSound,
-            isSoundLooped
+            isSoundLooped,
+            isStoppedWhenDeactivated,
+            isDirectPlay,
+            picture.url_for_portal
         );
 
         // Add it's avatar object to the booth group object.
         boothGroupObj.add(pictureObj.threeJsAvatar);
+
+        // Add it to the list of world objects.
+        addObjectToObjectsList(pictureObj.threeJsAvatar);
 
         pictureNum++;
     });
@@ -536,46 +744,148 @@ function buildOneBooth(boothJsonObj) {
 
     // Process all the videos in the booth.
     let videoNum = 0
-    boothJsonObj.videos.forEach(video => {
-        if (misc_shared_lib.isEmptySafeString(video.id))
-            throw new Error(`${errPrefix}The video at index(${videoNum}) has an empty ID.`);
 
-        // Make sure the television display ID is unique.
-        if (g_TelevisionDisplayManager.isExistingTelevisionId(video.id))
-            throw new Error(`${errPrefix}The video at index(${videoNum}) has a duplicate ID: ${video.id}.`);
+    if (true) {
+        boothJsonObj.videos.forEach(video => {
+            if (misc_shared_lib.isEmptySafeString(video.id))
+                throw new Error(`${errPrefix}The video at index(${videoNum}) has an empty ID.`);
 
-        // Create a television display object for each video.
-        const videoObj = buildSimpleTelevision(
-            video.id,
-            resolveBoothUrl(boothJsonObj, video.url),
-            // The video must be offset the booth's origin.
-            new THREE.Vector3(
-                boothOriginX + video.location.x,
-                boothOriginY + video.location.y,
-                boothOriginZ + video.location.z),
-            // The video initially faces the orientation specified in the JSON
-            //  file.
-            THREEJSSUPPORT.cardinalDirectionToEulerAngle(video.facing),
-            video.size
-        );
+            // Make sure the television display ID is unique.
+            if (g_TelevisionDisplayManager.isExistingTelevisionId(video.id))
+                throw new Error(`${errPrefix}The video at index(${videoNum}) has a duplicate ID: ${video.id}.`);
 
-        // Add it's avatar object to the booth group object.
-        boothGroupObj.add(videoObj.threeJsAvatar);
+            const videoY = boothOriginY + video.location.y;
 
-        if (bVerbose)
-            console.log(`${errPrefix}Television display created and added to scene for: ${video.id}`);
+            // Create a television display object for each video.
+            const videoObj = buildSimpleTelevision(
+                video.id,
+                resolveBoothUrl(boothJsonObj, video.url),
+                // The video must be offset the booth's far left edge.
+                new THREE.Vector3(
+                    farLeftEdgeX + video.location.x,
+                    videoY,
+                    video.location.z),
+                // The video initially faces the orientation specified in the JSON
+                //  file.
+                // THREEJSSUPPORT.cardinalDirectionToEulerAngle(video.facing),
+                THREEJSSUPPORT.cardinalDirectionToEuler3D(video.facing),
+                video.size
+            );
 
-        videoNum++;
-    });
+            // Add it's avatar object to the booth group object.
+            boothGroupObj.add(videoObj.threeJsAvatar);
+
+            // Add it to the list of world objects.
+            addObjectToObjectsList(videoObj.threeJsAvatar);
+
+            // Is there a video card_url?
+            if (video.card_url) {
+                const resolvedVideoCardUrl = resolveBoothUrl(boothJsonObj, video.card_url);
+                console.info(`${errPrefix}Building video card.  Video card_url: ${resolvedVideoCardUrl}`);
+
+                if (resolvedVideoCardUrl.indexOf('chico') >= 0) {
+                    console.info(`${errPrefix}Building video card for jonathan.`);
+                }
+
+                const boundingBox = getBoundingBoxOfThreeJsObject(videoObj.threeJsAvatar);
+                // Make the video card width the same as the video.
+                const cardWidth = video.size;
+                // Make the video card height 1/4 the size of the video.
+                const cardHeight = Math.trunc(video.size / 4);
+                // Position it right above the video player.
+                const cardY = boundingBox.max.y + Math.trunc(cardHeight / 2);
+
+                // Build a picture display for the video poster.
+                const cardObj = buildSimplePictureWithSound(
+                    boothJsonObj,
+                    `${video.id}-card`,
+                    resolvedVideoCardUrl,
+                    // The card must be offset video's height.
+                    new THREE.Vector3(
+                        farLeftEdgeX + video.location.x,
+                        cardY,
+                        video.location.z),
+                    // The card faces the same direction as the video it describes.
+                    THREEJSSUPPORT.cardinalDirectionToEuler3D(video.facing),
+                    // Paint the picture on the surface that faces the default cardinal direction.
+                    THREEJSSUPPORT.extendedCardinalDirToSurfaceName(THREEJSSUPPORT.DEFAULT_CARDINAL_DIRECTION),
+                    new Dimensions2D(cardWidth, cardHeight),
+                    false
+                );
+
+                // Add it's avatar object to the booth group object.
+                boothGroupObj.add(cardObj.threeJsAvatar);
+
+                // Add it to the list of world objects.
+                addObjectToObjectsList(cardObj.threeJsAvatar);
+            }
+
+            if (bVerbose)
+                console.log(`${errPrefix}Television display created and added to scene for: ${video.id}`);
+
+            videoNum++;
+        });
+    }
 
     // -------------------- END  : VIDEOS ------------
 
-    // Rotate the booth to face the PRIMARY_FACING direction.
-    // console.warn(`${errPrefix}BOOTH ROTATION IS DISABLED!`);
-    boothGroupObj.rotateOnAxis(WORLD_AXIS_Y, baseRotationAngle)
+
+    // Move the group to the new location.
+    // boothGroupObj.position.set(adjX, boothOriginY, adjZ);
+
+    // Adjust the booth origin X to so that it takes into account the
+    //  center of the booth.
+    // const adjBoothOriginX = boothOriginX - (sumBackWallsLength / 2);
+
+    // Orient it as per the PRIMARY_FACING direction.
+    boothGroupObj.rotateY(baseRotationAngle);
+
+    // Adjust the X and Z so that we are in the center.
+    let adjX = boothGroupObj.position.x;
+    let adjY = boothGroupObj.position.y;
+    let adjZ = boothGroupObj.position.z;
+
+    const halfBackWallsLen = sumBackWallsLength / 2;
+
+    const cardinalDirLower = boothJsonObj.primary_facing.toLowerCase();
+    if (cardinalDirLower === 'north') {
+        // Nothing to do, coordinates are already correct.
+    } else if (cardinalDirLower === 'south') {
+        // Flip the sign on the X coordinate due to the rotation
+        //  we just made..
+        adjX = -adjX;
+    } else if (cardinalDirLower === 'east') {
+        // This centers the booth around the world origin(0,0,0).
+        adjZ += halfBackWallsLen;
+        // This moves the booth to the specified booth origin.
+    } else if (cardinalDirLower === 'west') {
+        // This centers the booth around the world origin(0,0,0).
+        adjZ -= halfBackWallsLen;
+    } else {
+        throw new Error(`${errPrefix}The primary_facing direction is invalid: ${cardinalDirLower}`);
+    }
+
+    boothGroupObj.position.set(boothOriginX, boothOriginY, boothOriginZ);
+
+    // boothGroupObj.position.set(adjX, adjY, adjZ);
+
+    // The booth should now be centered around the world origin (0, 0, 0).
+    //  Now move it to where the booth origin dictates it should be.
+
+    // This will not work for groups because the axis is wrong for a group.
+    // boothGroupObj.rotateOnAxis(WORLD_AXIS_Y, baseRotationAngle)
+
+    // Instead, rotate the group "manually" by adjusting it's rotation
+    //  around the y axis.
+    // boothGroupObj.rotation.y += baseRotationAngle;
+
+    // boothGroupObj.position.set(adjBoothOriginX, boothOriginY, boothOriginZ);
+
 
     // Add the booth to the scene.
     g_ThreeJsScene.add(boothGroupObj);
+
+    // boothGroupObj.position.set(1000, boothOriginY, 1000);
 }
 
 /**
@@ -585,216 +895,113 @@ function buildOneBooth(boothJsonObj) {
 function jsonWorldContentToScene() {
     const errPrefix = `(jsonWorldContentToScene) `;
 
+    // console.warn(`${errPrefix}Converting JSON world content to scene: DISABLED.`);
+    // return;
+
     if (!g_AryBooths)
         throw new Error(errPrefix + `The global booths array is missing.`);
 
     // Process each booth.
     g_AryBooths.forEach(boothObj => {
         // Process each booth's content.
+        console.info(`${errPrefix}Processing booth: ${boothObj.display_name}`);
         buildOneBooth(boothObj);
     });
 }
 
 /**
- * Initialize the g_ThreeJsScene.
+ * Prepare teh scene for HDRI usage.
  */
-/*
-function initializeThreeJS_original() {
+function prepareHdri() {
+    const params = {
+        exposure: 2.0
+    };
+
+    g_ThreeJsRenderer.toneMapping = THREE.ReinhardToneMapping;
+    g_ThreeJsRenderer.toneMappingExposure = params.exposure;
+    g_ThreeJsRenderer.outputEncoding = THREE.sRGBEncoding;
+
+    new EXRLoader()
+        .load( 'hdri/royal_esplanade_4k.exr', function ( texture, textureData ) {
+
+            // memorial.exr is NPOT
+
+            //console.log( textureData );
+            //console.log( texture );
+
+            // EXRLoader sets these default settings
+            //texture.generateMipmaps = false;
+            //texture.minFilter = LinearFilter;
+            //texture.magFilter = LinearFilter;
+
+            const material = new THREE.MeshBasicMaterial( { map: texture } );
+            const quad = new THREE.PlaneGeometry( 1.5 * textureData.width / textureData.height, 1.5 );
+            const mesh = new THREE.Mesh( quad, material );
+            mesh.position.set(0,0,0);
+            g_ThreeJsScene.add( mesh );
+
+            // Add the GLTF model.
+            testGltf();
+
+            // render();
+        } );
+}
+
+function initializeThreeJS() {
     const errPrefix = `(initializeThreeJS) `;
 
-    g_ThreeJsCamera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 1, 1000 );
+    // Look for the URL element that determines the world
+    //  name.  The default is "neo-prime"
+
+    let worldToLoad = 'neo-prime';
+
+    const urlArguments = getUrlArguments();
+
+    if ('world' in urlArguments) {
+        worldToLoad = urlArguments['world'];
+    }
+
+    if (worldToLoad === 'nft-showcase')
+        initializeNftShowcase();
+    else
+        initializeNeoPrime();
+
+}
+
+function initializeNftShowcase() {
+    const errPrefix = `(function initializeNftShowcase) `;
+
+    assignThreeJsRenderer(new THREE.WebGLRenderer( { antialias: true }) );
+    g_ThreeJsRenderer.setPixelRatio( window.devicePixelRatio );
+    g_ThreeJsRenderer.setSize( window.innerWidth, window.innerHeight );
+    g_ThreeJsRenderer.toneMapping = THREE.ACESFilmicToneMapping;
+    g_ThreeJsRenderer.toneMappingExposure = 1;
+    g_ThreeJsRenderer.outputEncoding = THREE.sRGBEncoding;
+
+    assignThreeJsCamera(new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 1000));
     g_ThreeJsCamera.position.y = 10;
 
-    g_ThreeJsScene = new THREE.Scene();
-    g_ThreeJsScene.background = new THREE.Color( 0xffffff );
-    g_ThreeJsScene.fog = new THREE.Fog( 0xffffff, 0, 750 );
+    assignThreeJsScene(new THREE.Scene());
+    g_ThreeJsScene.background = new THREE.Color(0xffffff);
+    g_ThreeJsScene.fog = new THREE.Fog(0xffffff, 0, 750);
 
-    const light = new THREE.HemisphereLight( 0xeeeeff, 0x777788, 0.75 );
-    light.position.set( 0.5, 1, 0.75 );
-    g_ThreeJsScene.add( light );
-
-    g_ThreeJsControls = new PointerLockControls( g_ThreeJsCamera, document.body );
+    assignThreeJsControls(new PointerLockControls(g_ThreeJsCamera, document.body));
 
     // Find the canvas for our ThreeJS g_ThreeJsScene.
     const threeJsCanvas = getThreeJsCanvasElement();
     jqThreeJsCanvas = $('#' + threeJsCanvas.id);
 
-    // Find the row in the outer table where the instructions DIV lives.
-    const instructionsRow = document.getElementById( INSTRUCTIONS_ROW_ID );
-    if (!instructionsRow) {
-        console.error(`${errPrefix} Unable to find the table row for the instructions DIV using ID: ${instructionsRow.id}.`);
-        return;
-    }
+    g_ThreeJsScene.add(g_ThreeJsControls.getObject());
 
-    // Find the place where we should put the instructions text.
-    const instructionsDiv  = document.getElementById( INSTRUCTIONS_DIV_ID);
-    if (!instructionsDiv) {
-        console.error(`${errPrefix} Unable to find the instructions DIV using ID: ${instructionsDiv.id}.`);
-        return;
-    }
-    const jqInstructions = $(`#${instructionsDiv.id}`);
+    assignThreeJsRaycaster(new THREE.Raycaster(new THREE.Vector3(), new THREE.Vector3(0, -1, 0), 0, 10));
 
-    // If the user clicks on the instructions DIV (not table row), start playing and lock
-    // the controls to the canvas window.
-    instructionsDiv.addEventListener( 'click', function () {
-        g_ThreeJsControls.lock();
-    } );
-
-    // Listen for the 'lock' event message from the controls module.
-    g_ThreeJsControls.addEventListener( 'lock', function () {
-        // We received the message from the controls object that tells us the
-        //  controls have been locked.  This means the player wants to play.
-
-        // Hide the outer table.
-        $('#' + OUTER_TABLE_ID).hide();
-
-        // Show the canvas.
-        $('#' + THREEJS_CANVAS_ID).show();
-    } );
-
-    // We received the message from the controls object that the
-    //  controls have been locked.  This means the player wants to play.
-    g_ThreeJsControls.addEventListener( 'unlock', function () {
-        // We received the message from the controls object that tells us the
-        //  controls have been locked.  This means the player wants to stop playing.
-
-        // Show the outer table.
-        $('#' + OUTER_TABLE_ID).show();
-
-        // Hide the canvas.
-        $('#' + THREEJS_CANVAS_ID).hide();
-    } );
-
-    g_ThreeJsScene.add( g_ThreeJsControls.getObject() );
-
-    // ROS: Keypress handlers.  The system does not move a certain number
-    //  of units per keypress.  Instead, it applies a constant velocity
-    //  as long as the key is held down.  The direction of the movement
-    //  is determined by the key pressed.
-    const onKeyDown = function ( event ) {
-        switch ( event.code ) {
-            case 'ArrowUp':
-            case 'KeyW':
-                moveForward = true;
-                break;
-
-            case 'ArrowLeft':
-            case 'KeyA':
-                moveLeft = true;
-                break;
-
-            case 'ArrowDown':
-            case 'KeyS':
-                moveBackward = true;
-                break;
-
-            case 'ArrowRight':
-            case 'KeyD':
-                moveRight = true;
-                break;
-
-            // ROS: Create a new box whenever the 'B' key is pressed.
-            case 'KeyB':
-                makeBoxInScene_original();
-                break;
-            case 'Space':
-                if (canJump === true)
-                    velocity.y += 350;
-                canJump = false;
-                break;
-        }
-    };
-
-    const onKeyUp = function ( event ) {
-        switch ( event.code ) {
-            case 'ArrowUp':
-            case 'KeyW':
-                moveForward = false;
-                break;
-
-            case 'ArrowLeft':
-            case 'KeyA':
-                moveLeft = false;
-                break;
-
-            case 'ArrowDown':
-            case 'KeyS':
-                moveBackward = false;
-                break;
-
-            case 'ArrowRight':
-            case 'KeyD':
-                moveRight = false;
-                break;
-        }
-    };
-
-    document.addEventListener( 'keydown', onKeyDown );
-    document.addEventListener( 'keyup', onKeyUp );
-
-    g_ThreeJsRaycaster = new THREE.Raycaster( new THREE.Vector3(), new THREE.Vector3( 0, - 1, 0 ), 0, 10 );
-
-    // floor
-
-    let floorGeometry = new THREE.PlaneGeometry( 2000, 2000, 100, 100 );
-    floorGeometry.rotateX( - Math.PI / 2 );
-
-    // vertex displacement
-    let position = floorGeometry.attributes.position;
-
-    for ( let i = 0, l = position.count; i < l; i ++ ) {
-        vertex.fromBufferAttribute( position, i );
-
-        vertex.x += Math.random() * 20 - 10;
-        vertex.y += Math.random() * 2;
-        vertex.z += Math.random() * 20 - 10;
-
-        position.setXYZ( i, vertex.x, vertex.y, vertex.z );
-    }
-
-    floorGeometry = floorGeometry.toNonIndexed(); // ensure each face has unique vertices
-
-    position = floorGeometry.attributes.position;
-    const colorsFloor = [];
-
-    // Create the color pattern on the floor.
-    for ( let i = 0, l = position.count; i < l; i ++ ) {
-        color.setHSL( Math.random() * 0.3 + 0.5, 0.75, Math.random() * 0.25 + 0.75 );
-        colorsFloor.push( color.r, color.g, color.b );
-    }
-
-    floorGeometry.setAttribute( 'color', new THREE.Float32BufferAttribute( colorsFloor, 3 ) );
-
-    const floorMaterial = new THREE.MeshBasicMaterial( { vertexColors: true } );
-
-    const floor = new THREE.Mesh( floorGeometry, floorMaterial );
-
-    // Add the floor to the g_ThreeJsScene.
-    g_ThreeJsScene.add( floor );
-
-    // objects
-
-    // ROS: Made g_BoxGeometry a global variable so that it can be used
-    //  on demand when a new conference participant is added.
-    // const g_BoxGeometry = new THREE.BoxGeometry( 20, 20, 20 ).toNonIndexed();
-
-    position = g_BoxGeometry.attributes.position;
-    const colorsBox = [];
-
-    // This puts the colors on the automatically generated boxes.
-    for ( let i = 0, l = position.count; i < l; i ++ ) {
-        color.setHSL( Math.random() * 0.3 + 0.5, 0.75, Math.random() * 0.25 + 0.75 );
-        colorsBox.push( color.r, color.g, color.b );
-    }
-
-    // Set the box color.
-    g_BoxGeometry.setAttribute( 'color', new THREE.Float32BufferAttribute( colorsBox, 3 ) );
-
-    for (let i = 0; i < g_NumBoxesToAutoCreate; i ++ )
-        makeBoxInScene_original(g_BoxGeometry);
+    // LIGHT
+    const light = new THREE.HemisphereLight(0xeeeeff, 0x777788, 0.75);
+    light.position.set(0.5, 1, 0.75);
+    g_ThreeJsScene.add(light);
 
     // Create the renderer.
-    g_ThreeJsRenderer = new THREE.WebGLRenderer( { antialias: true } );
+    assignThreeJsRenderer(new THREE.WebGLRenderer( { antialias: true }) );
     g_ThreeJsRenderer.setPixelRatio( window.devicePixelRatio );
     // document.body.appendChild( renderer.domElement );
     threeJsCanvas.appendChild(g_ThreeJsRenderer.domElement);
@@ -802,79 +1009,92 @@ function initializeThreeJS_original() {
 
     // Watch for the resizing of the canvas.
     window.addEventListener( 'resize', onWindowResize );
+
+    // HDRI files are served from S3.
+    // const theLoader = new RGBELoader();
+
+    // TODO: This should not be hard-coded.
+    const hdrFilename = 'royal_esplanade_4k.hdr';
+    const fullUrlToHdri = `${S3_BASE_URL}/somnium-wave/hdri/${hdrFilename}`;
+
+    console.warn(`${errPrefix}Loading HDR file from S3 using the URL: ${fullUrlToHdri}.`);
+
+    new RGBELoader()
+        .load( fullUrlToHdri, function ( texture ) {
+            texture.mapping = THREE.EquirectangularReflectionMapping;
+
+            g_ThreeJsScene.background = texture;
+            g_ThreeJsScene.environment = texture;
+
+            console.info(`${errPrefix}HDRI image successfully loaded.`);
+
+            testGltf();
+        } );
+
+    /*
+        new RGBELoader()
+        // .setPath( 'textures/equirectangular/' )
+        .setPath( 'hdri/' )
+        // .load( 'royal_esplanade_1k.hdr', function ( texture ) {
+        .load( 'royal_esplanade_4k.hdr', function ( texture ) {
+            texture.mapping = THREE.EquirectangularReflectionMapping;
+
+            g_ThreeJsScene.background = texture;
+            g_ThreeJsScene.environment = texture;
+
+            console.info(`${errPrefix}HDRI image successfully loaded.`);
+
+            testGltf();
+
+        } );
+
+     */
 }
-*/
 
-function initializeThreeJS() {
-    const errPrefix = `(initializeThreeJS) `;
+function initializeNeoPrime() {
+    const errPrefix = `(initializeNeoPrime) `;
 
-    assignThreeJsCamera(new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 1, 1000 ));
+    assignThreeJsCamera(new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 1000));
     g_ThreeJsCamera.position.y = 10;
 
-    assignThreeJsScene( new THREE.Scene());
-    g_ThreeJsScene.background = new THREE.Color( 0xffffff );
-    g_ThreeJsScene.fog = new THREE.Fog( 0xffffff, 0, 750 );
+    assignThreeJsScene(new THREE.Scene());
+    g_ThreeJsScene.background = new THREE.Color(0xffffff);
+    g_ThreeJsScene.fog = new THREE.Fog(0xffffff, 0, 750);
 
-    const light = new THREE.HemisphereLight( 0xeeeeff, 0x777788, 0.75 );
-    light.position.set( 0.5, 1, 0.75 );
-    g_ThreeJsScene.add( light );
-
-    assignThreeJsControls(new PointerLockControls( g_ThreeJsCamera, document.body ));
+    assignThreeJsControls(new PointerLockControls(g_ThreeJsCamera, document.body));
 
     // Find the canvas for our ThreeJS g_ThreeJsScene.
     const threeJsCanvas = getThreeJsCanvasElement();
     jqThreeJsCanvas = $('#' + threeJsCanvas.id);
 
-    // Find the row in the outer table where the instructions DIV lives.
-    /*
-    const instructionsRow = document.getElementById( INSTRUCTIONS_ROW_ID );
-    if (!instructionsRow) {
-        console.error(`${errPrefix} Unable to find the table row for the instructions DIV using ID: ${instructionsRow.id}.`);
-        return;
-    }
+    g_ThreeJsScene.add(g_ThreeJsControls.getObject());
 
-    // Find the place where we should put the instructions text.
-    const instructionsDiv  = document.getElementById( INSTRUCTIONS_DIV_ID);
-    if (!instructionsDiv) {
-        console.error(`${errPrefix} Unable to find the instructions DIV using ID: ${instructionsDiv.id}.`);
-        return;
-    }
-    const jqInstructions = $(`#${instructionsDiv.id}`);
-
-    // If the user clicks on the instructions DIV (not table row), start playing and lock
-    // the controls to the canvas window.
-    instructionsDiv.addEventListener( 'click', function () {
-        g_ThreeJsControls.lock();
-    } );
-     */
-
-
-    g_ThreeJsScene.add( g_ThreeJsControls.getObject() );
-
-    assignThreeJsRaycaster(new THREE.Raycaster( new THREE.Vector3(), new THREE.Vector3( 0, - 1, 0 ), 0, 10 ));
+    assignThreeJsRaycaster(new THREE.Raycaster(new THREE.Vector3(), new THREE.Vector3(0, -1, 0), 0, 10));
 
     // BASIC WORLD OBJECTS
     // LIGHT
-    //let light = new THREE.PointLight(0xffffff);
-    //light.position.set(100,250,100);
-    //g_ThreeJsScene.add(light);
+    let light = new THREE.PointLight(0xffffff);
+    light.position.set(100, 250, 100);
+    g_ThreeJsScene.add(light);
 
     // FLOOR
     // server/public/images/three-js-simple/checkerboard.jpg
-    let floorTexture = new THREE.ImageUtils.loadTexture( '/images/three-js-simple/checkerboard.jpg' );
+    let floorTexture = new THREE.ImageUtils.loadTexture('/images/three-js-simple/checkerboard.jpg');
     floorTexture.wrapS = floorTexture.wrapT = THREE.RepeatWrapping;
-    floorTexture.repeat.set( 10, 10 );
-    let floorMaterial = new THREE.MeshBasicMaterial( { map: floorTexture, side: THREE.DoubleSide } );
+    floorTexture.repeat.set(15, 15);
+    let floorMaterial = new THREE.MeshBasicMaterial({map: floorTexture, side: THREE.DoubleSide});
     let floorGeometry = new THREE.PlaneGeometry(1000, 1000, 10, 10);
     let floor = new THREE.Mesh(floorGeometry, floorMaterial);
     floor.position.y = -0.5;
+    floor.position.z = -350; // -450;
     floor.rotation.x = Math.PI / 2;
     g_ThreeJsScene.add(floor);
 
     // SKYBOX
-    let skyBoxGeometry = new THREE.CubeGeometry( 10000, 10000, 10000 );
-    let skyBoxMaterial = new THREE.MeshBasicMaterial( { color: 0x9999ff, side: THREE.BackSide } );
-    let skyBox = new THREE.Mesh( skyBoxGeometry, skyBoxMaterial );
+    let skyBoxGeometry = new THREE.CubeGeometry(10000, 10000, 10000);
+    // let skyBoxMaterial = new THREE.MeshBasicMaterial( { color: 0x9999ff, side: THREE.BackSide } );
+    let skyBoxMaterial = new THREE.MeshBasicMaterial({color: 0x00CC00, side: THREE.BackSide});
+    let skyBox = new THREE.Mesh(skyBoxGeometry, skyBoxMaterial);
     g_ThreeJsScene.add(skyBox);
 
     ////////////
@@ -891,10 +1111,9 @@ function initializeThreeJS() {
         g_ThreeJsScene.add(mesh);
     }
 
-    // TODO: NEED FLOOR!
-
-    // Add the floor to the g_ThreeJsScene.
-    g_ThreeJsScene.add( floor );
+    // Mirror test.
+    // addCircularMirror(new THREE.Vector3(-15, 0.5, -249), new THREE.Vector3(- Math.PI / 2, Math.PI / 2, 0));
+    // addCircularMirror(new THREE.Vector3( 60, 0.5, -249), new THREE.Vector3(- Math.PI / 2, -Math.PI / 2, 0));
 
     // -------------------- BEGIN: ROS: Custom World Objects ------------
 
@@ -908,11 +1127,12 @@ function initializeThreeJS() {
             50);
 
         // Add it to the scene.
-        addObjectToScene(televisionObj.threeJsAvatar);
+        addObjectToObjectsList(televisionObj.threeJsAvatar);
 
         // Add a picture display to the scene that plays a bell when you approach it
         //  and doesn't stop until you leave.
         const pictureObj = buildSimplePictureWithSound(
+            null,
             'picture-with-looping-bell-1',
             // '/images/three-js-simple/dawnmountain-zpos.png',
             '/images/world/browserify.png',
@@ -926,7 +1146,7 @@ function initializeThreeJS() {
         // '/sounds/sfx/mono-bell-right.wav', true, true);
 
         // Add it to the scene.
-        addObjectToScene(pictureObj.threeJsAvatar);
+        addObjectToObjectsList(pictureObj.threeJsAvatar);
     }
 
     // Integrate the content in the JSON booth files into the ThreeJS scene.
@@ -952,6 +1172,12 @@ function onWindowResize() {
     g_ThreeJsCamera.aspect = window.innerWidth / window.innerHeight;
     g_ThreeJsCamera.updateProjectionMatrix();
 
+    // Resize the mirror.
+    theGroundMirror.getRenderTarget().setSize(
+        window.innerWidth * window.devicePixelRatio,
+        window.innerHeight * window.devicePixelRatio
+    );
+
     setRendererSize();
 }
 
@@ -962,25 +1188,26 @@ function onWindowResize() {
  *  the lights, etc.
  *
  *  NOTE: If the object is a child of a group, it will NOT be added to the
- *   scene!  Otherwise it will be double-added
- *   when the group object is added to the scene!
+ *   scene!  Otherwise it will be double-added when the group object is added
+ *   to the scene!
  *
  * @param {Object} newObject - The object to add to the g_ThreeJsScene.
  *
  */
-function addObjectToScene(newObj) {
+function addObjectToObjectsList(newObj) {
     const errPrefix = `(addObjectToScene) `;
 
     if (!misc_shared_lib.isNonNullObjectAndNotArray(newObj))
-    	throw new Error(errPrefix + `The newObj parameter does not contain a valid object.`);
+        throw new Error(errPrefix + `The newObj parameter does not contain a valid object.`);
 
-    if (newObj.parent && newObj.parent.isGroup) {
-        // The object is a child of a group.  Don't add it to the scene.
-        return;
-    }
-
-    g_ThreeJsScene.add(newObj);
+    // Always add the object to the objects array so that raycasting operations
+    //  work.
     g_ThreeJsObjects.push(newObj);
+
+    const bIsChildOfGroup = (newObj.parent && newObj.parent.isGroup);
+
+    if (!bIsChildOfGroup)
+        g_ThreeJsScene.add(newObj);
 }
 
 /**
@@ -1040,20 +1267,128 @@ function removeObjFromSceneByUuid(theUuid) {
     return true;
 }
 
+/**
+ * Add a mirror to the scene.
+ *
+ * @param {Number} theWidth - The width of the mirror.
+ */
+function addCircularMirror(position3D, rotation3D,  theRadius=20, numSegments=128) {
+    let geometry, material;
+
+    geometry = new THREE.CircleGeometry( theRadius, numSegments );
+    theGroundMirror = new THREE.Reflector( geometry, {
+        clipBias: 0.003,
+        textureWidth: window.innerWidth * window.devicePixelRatio,
+        textureHeight: window.innerHeight * window.devicePixelRatio,
+        color: 0x777777
+    } );
+
+    theGroundMirror.position.x = position3D.x;
+    theGroundMirror.position.y = position3D.y;
+    theGroundMirror.position.z = position3D.z;
+    theGroundMirror.rotateX( rotation3D.x );
+    theGroundMirror.rotateY( rotation3D.y );
+    theGroundMirror.rotateZ( rotation3D.z );
+
+    g_ThreeJsScene.add( theGroundMirror );
+}
+
 // Start the g_ThreeJsScene.
 initializeThreeJS();
 
-// The animate call has been moved to the document ready handler of the web page.
-// animate();
 
 // Hide the playground.
-jqThreeJsCanvas.hide();
+// jqThreeJsCanvas.hide();
+function testGltf() {
+    const errPrefix = `(testGltf) `;
+
+    // prepareHdri();
+
+    const loader = new GLTFLoader();
+
+    // Optional: Provide a DRACOLoader instance to decode compressed mesh data
+    const dracoLoader = new DRACOLoader();
+
+    // const urlToModel = '/models/gltf/somniumwave/somniumwave-test-1.glb';
+    const urlToModel ='/models/gltf/somniumwave/T15.gltf';
+
+    dracoLoader.setDecoderPath( '/examples/js/libs/draco/' );
+    loader.setDRACOLoader( dracoLoader );
+
+    // Load a glTF resource
+    loader.load(
+        // resource URL
+        urlToModel,
+        // called when the resource is loaded
+        function ( gltf ) {
+            const errPrefix = `(testGltf::load) `;
+
+            let mixer = new THREE.AnimationMixer( gltf.scene );
+            let action = mixer.clipAction( gltf.animations[ 0 ] );
+
+            // Resize and center.
+            let mroot = gltf.scene;
+            let bbox = new THREE.Box3().setFromObject(mroot);
+            let cent = bbox.getCenter(new THREE.Vector3());
+            let size = bbox.getSize(new THREE.Vector3());
+
+            //Rescale the object to normalized space
+            let maxAxis = Math.max(size.x, size.y, size.z);
+            // mroot.scale.multiplyScalar(1.0 / maxAxis);
+            mroot.scale.multiplyScalar(40.0 / maxAxis);
+            bbox.setFromObject(mroot);
+            bbox.getCenter(cent);
+            bbox.getSize(size);
+            //Reposition to 0,halfY,0
+
+            mroot.position.copy(cent).multiplyScalar(-1);
+            mroot.position.y += (size.y * 0.5);
+            mroot.position.y += 1;
+            mroot.position.z = -30;
+
+            // gltf.animations; // Array<THREE.AnimationClip>
+            // gltf.scene; // THREE.Group
+            // gltf.scenes; // Array<THREE.Group>
+            // gltf.cameras; // Array<THREE.Camera>
+            // gltf.asset; // Object
+
+            // Start the model animation.
+            action.play();
+
+            // Add the animation mixer and clip action to our collections.
+            g_AnimationMixers[urlToModel] = mixer;
+            g_ClipActions[urlToModel] = action;
+
+            g_ThreeJsScene.add( gltf.scene );
+
+            console.info(`${errPrefix}Test GLTF model added to scene: ${urlToModel}.`);
+        },
+        // called while loading is progressing
+        function ( xhr ) {
+            const errPrefix = `(testGltf::processing) `;
+
+            const pctLoaded = xhr.loaded / xhr.total * 100;
+
+            console.info(`${errPrefix}Test GLTF model(${urlToModel}), percent loaded: ${pctLoaded}%.`);
+        },
+        // called when loading has errors
+        function ( error ) {
+            const errPrefix = `(testGltf::error) `;
+
+            console.error( `${errPrefix}Error loading model: ${urlToModel}`);
+            console.info(errPrefix + `error object:`);
+            console.dir(error, {depth: null, colors: true});
+        }
+    );
+}
 
 export {
-    addObjectToScene,
+    addObjectToObjectsList,
     dumpPositionAndOrientation,
+    initializeThreeJS,
     makeBoxInScene_original,
     removeObjFromSceneByUuid,
-    g_ThreeJsObjects};
+    testGltf
+    };
 
 // , g_ThreeJsCamera, g_ThreeJsScene, g_ThreeJsRenderer, g_ThreeJsControls, g_ThreeJsRaycaster, g_ThreeJsObjects };

@@ -14,6 +14,7 @@ import {
 import {getLocalUserParticipantId} from "../participant-helpers/participant-helper-objects.js";
 import {g_ThreeJsCamera, g_ThreeJsControls} from "../objects/three-js-global-objects.js";
 import {restorePage} from '../misc/persistence.js';
+import {g_HowlerGlobalObj} from "../sound-effects-support/howler-support.js";
 
 const errPrefix = '(doly-io-ui.js) ';
 
@@ -916,6 +917,12 @@ const initUI = async() => {
       // NOTE: Pressing the ESC key does the same for doUnlockProcessing()
       //  instead of us calling the unlock() function ourselves.
       g_ThreeJsControls.lock();
+
+      // Set the volume to 1.0, to initialize the Howler context and to
+      //  set the global volume level.  We have to wait until the user
+      //  clicks on the page since the audio context is not allowed
+      //  to be created until a user gesture on the page occurs.
+      g_HowlerGlobalObj.volume(1.0);
     });
 
     /**
@@ -931,20 +938,6 @@ const initUI = async() => {
       // Enter FPS controls mode.
       g_ThreeJsControls.lock();
     });
-
-    // Listen for the 'lock' event message from the controls module.
-    g_ThreeJsControls.addEventListener( 'lock', function () {
-      // We received the message from the controls object that tells us the
-      //  controls have been locked.  This means the player wants to play.
-
-      doPostLockProcessing();
-    } );
-
-    // We received the message from the controls object that the
-    //  controls have been unlocked.  This means the player wants to stop playing.
-    g_ThreeJsControls.addEventListener( 'unlock', function () {
-      doPostUnlockProcessing();
-    } );
 
     // ROS: Onclick handler for video DIVs.
     $('.video-container').click((e) => {
@@ -1020,6 +1013,20 @@ $(document).click(function() {
  */
 function callMeWhenPageIsReady() {
     const errPrefix = `(callMeWhenPageIsReady) `;
+
+    // Listen for the 'lock' event message from the controls module.
+    g_ThreeJsControls.addEventListener( 'lock', function () {
+        // We received the message from the controls object that tells us the
+        //  controls have been locked.  This means the player wants to play.
+
+        doPostLockProcessing();
+    } );
+
+    // We received the message from the controls object that the
+    //  controls have been unlocked.  This means the player wants to stop playing.
+    g_ThreeJsControls.addEventListener( 'unlock', function () {
+        doPostUnlockProcessing();
+    } );
 
     // Hide the loading world DIV and show the ready DIV.
     waitingRoomLoadingDivSelector.hide();

@@ -291,23 +291,47 @@ function isFalseOrStrFalse(strOrBool)
 }
 
 /**
- * This method tries to parse the given string as a number.
+ * This method tries to parse the given string as an integer.
  *
- * @param {string} intAsStr - A string that allegedly contains a number.
+ * @param {string} intAsStr - A string that allegedly contains a integer.
  *
  * @return {number|null} - Returns an integer if the string contains a
  * 	valid integer, or NULL if it does not.
  */
 function parseIntOrNull(intAsStr) {
-	var retValue = null;
+	let retValue = null;
     
     if (!isEmptySafeString(intAsStr))
 	{
-    	if (!isNaN(intAsStr))
-            retValue = parseInt(intAsStr);
-    }
-    
+		retValue = parseInt(intAsStr);
+
+		if (!isNaN(retValue))
+			return null
+	}
+
 	return retValue;
+}
+
+/**
+ * This method returns TRUE if the given string is a valid number
+ *  and it is positive (0 or greater), FALSE if not.
+ *
+ * @param {Number} theNumber - A number to evaluate.
+ *
+ * @return {Boolean}
+ */
+function isZeroOrPositiveNumber(theNumber) {
+	if (typeof theNumber === 'number')
+	{
+		// Check for NaN
+		if (isNaN(theNumber))
+			return false;
+
+		if (theNumber >= 0)
+			return true;
+	}
+
+	return false;
 }
 
 /**
@@ -615,6 +639,7 @@ if (typeof module == 'undefined' || typeof module.exports == 'undefined')
 	window.misc_shared_lib.isEmptySafeString = isEmptySafeString;
 	window.misc_shared_lib.isFalseOrStrFalse = isFalseOrStrFalse;
 	window.misc_shared_lib.isNonNullObjectAndNotArray = isNonNullObjectAndNotArray;
+	window.misc_shared_lib.isZeroOrPositiveNumber = isZeroOrPositiveNumber;
 	window.misc_shared_lib.isProcessGlobalVarPresent = isProcessGlobalVarPresent;
 	window.misc_shared_lib.isTrueOrStrTrue = isTrueOrStrTrue;
 	window.misc_shared_lib.makeStringSafe = makeStringSafe;
@@ -646,6 +671,7 @@ else
 			isEmptySafeString: isEmptySafeString,
 			isFalseOrStrFalse: isFalseOrStrFalse,
 			isNonNullObjectAndNotArray: isNonNullObjectAndNotArray,
+			isZeroOrPositiveNumber: isZeroOrPositiveNumber,
 			isProcessGlobalVarPresent: isProcessGlobalVarPresent,
 			isTrueOrStrTrue: isTrueOrStrTrue,
 			makeStringSafe: makeStringSafe,

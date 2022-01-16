@@ -1,5 +1,5 @@
-// This is the route for the NEOLAND virtual world page.  This supersedes
-//  the neoland page.
+// WARNING: This page has been superseded by the NEOLAND page!
+// This is the route for the NEOVERSE virtual world page.
 
 let express = require('express');
 let router = express.Router();
@@ -7,12 +7,12 @@ let http_status_codes = require('http-status-codes');
 let common_routines = require('../common/common-routines');
 
 /* GET home page. */
-router.get('/metaverse', function(req, res, next) {
+router.get('/neoverse', function(req, res, next) {
 
-    try
-    {
-        res.render('neoland', { title: 'NEO3D LIVE!' });
-    }
+	try
+	{
+		res.render('neoverse', { title: 'Express' });
+	}
     catch (err)
     {
         console.log('[ERROR: index] Error rendering page -> ' + err.message);

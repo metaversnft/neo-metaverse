@@ -6,6 +6,14 @@ import * as POINTERLOCK from "../threejs/examples/pointerlock.js";
 import * as PARTICIPANT_SUPPORT from "./object-participant-support.js";
 import {ParticipantWrapper, ParticipantWrapperManager, g_ParticipantWrapperManager, isLocalUserParticipantId, getLocalUserParticipantId} from "../participant-helpers/participant-helper-objects.js";
 import {g_ThreeJsCamera} from "./three-js-global-objects.js";
+import {
+    getClosestParticipantLookingAtUs,
+    isCameraLookingAtTargetObj,
+    trueDistanceFromObject3D
+} from "./object-participant-support.js";
+import {isLocalUserInConference} from "../dolby-io/dolby-io-support.js";
+import {g_GlobalState} from "./global-state.js";
+// import {isOwnedByTelevisionDisplay} from "./object-detectors.js";
 
 // Object that acts like an associative array that keeps track of all the
 //  active video nodes created by this module.
@@ -13,7 +21,7 @@ let g_AryVideoNodesForTelevisions = [];
 
 // This is the distance in ThreeJS world units that an object must be from a television
 //  before we consider it within the television's activation range.
-const MAX_DISTANCE_FROM_TELEVISION_FOR_ACTIVATION = 40;
+const MAX_DISTANCE_FROM_TELEVISION_FOR_ACTIVATION = 27;
 
 /**
  * This is the object that stores the details for one of the television
@@ -65,7 +73,7 @@ function TelevisionDisplay(televisionId, videoUrl, position, rotation, dimension
     this.dtCreated = Date.now();
 
     /** @property {String} - The ID to assign to this television. */
-    this.televisionId = televisionId;
+    this.idOfObject = televisionId;
 
     /** @property {Object|null} - The DOM element node that contains the "video"
      *  element assigned for our use.  It may be NULL if the user is not
@@ -191,6 +199,26 @@ function TelevisionDisplay(televisionId, videoUrl, position, rotation, dimension
     }
 
     /**
+     * Pause the video we host.
+     *
+     * @return {Boolean} - Returns TRUE if the video was paused, FALSE if
+     *  not.
+     */
+    this.pauseVideo = function() {
+        return self.executeVideoCommand('pause');
+    }
+
+    /**
+     * Plays the video we host.
+     *
+     * @return {Boolean} - Returns TRUE if the video play command succeeded, FALSE if
+     *  not.
+     */
+    this.playVideo = function() {
+        return self.executeVideoCommand('play');
+    }
+
+    /**
      * This function builds the ThreeJS object that will represent the
      *  television in the scene.  It also handles the creation of the
      *  DOM video element that will be used to display the
@@ -212,7 +240,7 @@ function TelevisionDisplay(televisionId, videoUrl, position, rotation, dimension
             throw new Error(errPrefix + `The value in the dimensions parameter is not a THREE.Vector3 object.`);
 
         // Use the television ID to build the video node ID.
-        const videoNodeId = 'television-' + self.televisionId;
+        const videoNodeId = 'television-' + self.idOfObject;
 
         // Create a video element and texture for the video that
         //  will represent this television.
@@ -246,26 +274,26 @@ function TelevisionDisplay(televisionId, videoUrl, position, rotation, dimension
 
         // Add the materials that comprise each face of the cube in this order: x+,x-,y+,y-,z+,z-
         //
-        // 1) Left face of cube (X-)
-        // 2) Right face of cube (X+)
+        // 1) Right face of cube (X+)
+        // 2) Left face of cube (X-)
         // 3) Bottom face of cube (Y-)
         // 4) Top face of cube (Y+)
-        // 5) Front face of cube (Z-), the default direction aka "north" aka Euler angle 0,0,0.
-        // 6) Front face of cube (Z+) - This face will show the video stream.
+        // 5) Front face of cube (Z+) - This face will show the video stream.
+        // 6) Front face of cube (Z-), the default direction aka "north" aka Euler angle 0,0,0.
         /*
         cubeMaterialArray.push( new THREE.MeshBasicMaterial( { color: 0xff3333 } ) );
         cubeMaterialArray.push( new THREE.MeshBasicMaterial( { color: 0xff8800 } ) );
         cubeMaterialArray.push( new THREE.MeshBasicMaterial( { color: 0xffff33 } ) );
         cubeMaterialArray.push( new THREE.MeshBasicMaterial( { color: 0x33ff33 } ) );
-        cubeMaterialArray.push( new THREE.MeshBasicMaterial( { map: videoTexture } ) );
         cubeMaterialArray.push( new THREE.MeshBasicMaterial( { color: 0x8833ff } ) );
+        cubeMaterialArray.push( new THREE.MeshBasicMaterial( { map: videoTexture } ) );
         */
-        cubeMaterialArray.push(new THREE.MeshBasicMaterial({color: 0xff8800}));
-        cubeMaterialArray.push(new THREE.MeshBasicMaterial({color: 0xff8800}));
-        cubeMaterialArray.push(new THREE.MeshBasicMaterial({color: 0xff8800}));
-        cubeMaterialArray.push(new THREE.MeshBasicMaterial({color: 0xff8800}));
+        cubeMaterialArray.push(new THREE.MeshBasicMaterial({color: 0x00FA9A}));
+        cubeMaterialArray.push(new THREE.MeshBasicMaterial({color: 0x00FA9A}));
+        cubeMaterialArray.push(new THREE.MeshBasicMaterial({color: 0x00FA9A}));
+        cubeMaterialArray.push(new THREE.MeshBasicMaterial({color: 0x00FA9A}));
+        cubeMaterialArray.push(new THREE.MeshBasicMaterial({color: 0x00FA9A}));
         cubeMaterialArray.push(new THREE.MeshBasicMaterial({map: self.videoTexture}));
-        cubeMaterialArray.push(new THREE.MeshBasicMaterial({color: 0xff8800}));
 
         const cubeMaterials = new THREE.MeshFaceMaterial(cubeMaterialArray);
 
@@ -285,10 +313,16 @@ function TelevisionDisplay(televisionId, videoUrl, position, rotation, dimension
 
         // Auto-start the video if requested.
         if (self.isAutoPlay)
-            self.executeVideoCommand('play')
+            self.playVideo();
 
         // Build the cube from a basic ThreeJS mesh and return it.
-        return new THREE.Mesh(cubeGeometry, cubeMaterials);
+        const newThreeJsObj = new THREE.Mesh(cubeGeometry, cubeMaterials);
+
+        // Give other code that operates at the ThreeJS object
+        //  level a reference to us.
+        newThreeJsObj.userData.neo3DParentObj = self;
+
+        return newThreeJsObj;
     }
 
     /**
@@ -314,7 +348,18 @@ function TelevisionDisplay(televisionId, videoUrl, position, rotation, dimension
         self.threeJsAvatar.scale.x = self.threeJsAvatar.scale.y = self.threeJsAvatar.scale.z = 1;
 
         // Set its "name" property to the television's ID.
-        self.threeJsAvatar.name = self.televisionId;
+        self.threeJsAvatar.name = self.idOfObject;
+    }
+
+    /**
+     * This function returns TRUE if we have a video node and it is
+     *  playing, FALSE if we don't have a video node or it is not
+     *  playing.
+     *
+     * @return {null}
+     */
+    this.isPlaying = function () {
+        return (self.videoNode && self.videoNode.is_playing);
     }
 
     /**
@@ -325,9 +370,9 @@ function TelevisionDisplay(televisionId, videoUrl, position, rotation, dimension
         let methodName = self.constructor.name + '::' + `cleanup`;
         let errPrefix = '(' + methodName + ') ';
 
-        console.info(`${errPrefix}Cleaning up television ${self.televisionId}`);
+        console.info(`${errPrefix}Cleaning up television ${self.idOfObject}`);
 
-        self.executeVideoCommand('pause');
+        self.pauseVideo();
 
         // Remove the video node from the DOM and our tracking object.
         self.videoNode.remove();
@@ -366,33 +411,47 @@ function TelevisionDisplay(televisionId, videoUrl, position, rotation, dimension
         //  therefore for each local user on their own individual
         //  PCs).
 
-        //Are any of the participant's within our "activation" distance?
-        if (PARTICIPANT_SUPPORT.isAnyParticipantWithinActivationDistance(
-            self.threeJsAvatar,
-            aryParticipantWrapperObjs,
-            MAX_DISTANCE_FROM_TELEVISION_FOR_ACTIVATION)) {
+        let bAreWeActivated = false;
+
+        // Are we in a conference?
+        if (isLocalUserInConference()) {
+            if (g_GlobalState.breakHerePlease && self.idOfObject === 'john-dvadoss-ngd-seattle-interview-at-neo-devon-2019') {
+                console.info(`${errPrefix}Set a breakpoint here.`);
+            }
+
+            // Yes. Find the closest participant that is looking at us, if any.
+            const closestParticipantWrapperObj =
+                getClosestParticipantLookingAtUs(self.threeJsAvatar, aryParticipantWrapperObjs, MAX_DISTANCE_FROM_TELEVISION_FOR_ACTIVATION);
+
+            if (closestParticipantWrapperObj)
+                bAreWeActivated = true;
+        } else {
+            // No.  See if the camera is looking at us.
+            bAreWeActivated = isCameraLookingAtTargetObj(self.threeJsAvatar, MAX_DISTANCE_FROM_TELEVISION_FOR_ACTIVATION);
+        }
+
+        if (bAreWeActivated) {
             // Yes, someone is near us.  Is the video playing?
             if (!self.videoNode.is_playing)
                 // No.  Start playing the video.
-                self.executeVideoCommand('play');
+                self.playVideo()
         } else {
             // No, we are "alone". Is the video playing?
             if (self.videoNode.is_playing) {
                 // Yes.  Pause the video.
-                self.executeVideoCommand('pause');
-                // console.warn(`${errPrefix}The video has NOT been paused.`);
+                self.pauseVideo()
             }
         }
 
         // Update our video volume based on the distance the local
         //  participant is from the television.
-
         let newVolume = 0;
 
         // We use the camera position to determine the distance to the television
         //  since all volumes are relative to the local user.
         // Yes.  What is their distance from the television?
-        let distanceFromTelevision = self.threeJsAvatar.position.distanceTo(g_ThreeJsCamera.position);
+        // let distanceFromTelevision = self.threeJsAvatar.position.distanceTo(g_ThreeJsCamera.position);
+        let distanceFromTelevision = trueDistanceFromObject3D(self.threeJsAvatar, g_ThreeJsCamera.position);
 
         // TODO: This will be a problem when we have scenes with multiple floors!
         //
@@ -564,7 +623,7 @@ function TelevisionDisplayManager() {
         const newTelevisionDisplayObj = new TelevisionDisplay(televisionId, videoUrl, position, rotation, dimensions, bIsLooped, bIsAutoPlay);
 
         // Assign it.
-        self.aryTelevisionDisplayObjs[newTelevisionDisplayObj.televisionId] = newTelevisionDisplayObj;
+        self.aryTelevisionDisplayObjs[newTelevisionDisplayObj.idOfObject] = newTelevisionDisplayObj;
 
         return newTelevisionDisplayObj;
     }
@@ -617,6 +676,68 @@ function TelevisionDisplayManager() {
         self.toArray().forEach(televisionObj => {
             televisionObj.updateTelevision(aryParticipantWrapperObjs);
         });
+    }
+
+    /**
+     * Given a ThreeJS group object, find all the television display
+     *  objects in the group and pause them.
+     *
+     * @param {THREE.Group} threeJsGroupObj - A valid ThreeJS group object.
+     */
+    this.pauseAllTelevisionsInGroup = function(threeJsGroupObj) {
+        const methodName = self.constructor.name + '::' + `pauseAllTelevisionsInGroup`;
+        const errPrefix = '(' + methodName + ') ';
+
+        if (!(threeJsGroupObj instanceof THREE.Group))
+            throw new Error(errPrefix + `The value in the threeJsGroupObj parameter is not a THREE.Group object.`);
+
+        // Find all the television display objects (video) in the group
+        //  and pause them.
+        threeJsGroupObj.children.forEach(threeJsObject => {
+            if (threeJsObject.neo3DParentObj && (threeJsObject.neo3DParentObj instanceof TelevisionDisplay))
+                threeJsObject.neo3DParentObj.pauseVideo();
+        });
+    }
+
+    /**
+     * Find the video player that is closest to the local user.
+     *
+     * @param {Boolean} bTelevisionMustBePlaying - If true, then only
+     *  those video players that are currently playing will be considered.
+     *
+     * @returns {TelevisionDisplay|null} - Returns the video player that is
+     *  closest to the local user.   If bTelevisionMustBePlaying is TRUE
+     *  and none of the television displays are playing a video, then
+     *  NULL is returned.
+     */
+    this.findClosestTelevisionToLocalUser = function(bTelevisionMustBePlaying=false) {
+        const errPrefix = `(findClosestTelevisionToLocalUser) `;
+
+        if (typeof bTelevisionMustBePlaying !== 'boolean')
+            throw new Error(errPrefix + `The value in the bTelevisionMustBePlaying parameter is not boolean.`);
+
+        let minDistance = -1;
+        let closestTelevisionObj = null;
+
+        for (let televisionId in self.aryTelevisionDisplayObjs) {
+            const televisionDisplayObj = self.aryTelevisionDisplayObjs[televisionId];
+
+            // Are we filtering by is-playing status?
+            if (bTelevisionMustBePlaying && !televisionDisplayObj.isPlaying())
+                // Yes and this one is not playing.  Ignore it.
+                continue;
+
+            const distFromCamera = trueDistanceFromObject3D(televisionDisplayObj.threeJsAvatar, g_ThreeJsCamera.position);
+
+            // Is this television display the first we have evaluated or
+            //  is the closest so far?
+            if (minDistance < 0 || distFromCamera < minDistance) {
+                minDistance = distFromCamera;
+                closestTelevisionObj = televisionDisplayObj;
+            }
+        }
+
+        return closestTelevisionObj
     }
 }
 

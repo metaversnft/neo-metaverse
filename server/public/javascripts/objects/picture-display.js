@@ -11,19 +11,22 @@ import {g_ThreeJsCamera} from "./three-js-global-objects.js";
 //import {TelevisionDisplay} from "./television";
 import GifLoader from '../three-js-gif-loader/gif-loader.js';
 import * as THREEJSSUPPORT from "../threejs-support/threejs-support-code.js";
+import {trueDistanceFromObject3D} from "./object-participant-support.js";
 
 
 // Regex to check valid URL
 //
 // Full URL with protocol prefix.
-const regexIsUrl_1  = new RegExp("((http|https)://)(www.)?[a-zA-Z0-9@:%._\\+~#?&//=]{2,256}\\.[a-z]{2,6}\\b([-a-zA-Z0-9@:%._\\+~#?&//=]*)");
+// const regexIsUrl_1  = new RegExp("((http|https)://)(www.)?[a-zA-Z0-9@:%._\\+~#?&//=]{2,256}\\.[a-z]{2,6}\\b([-a-zA-Z0-9@:%._\\+~#?&//=]*)");
 
 // Local URL, no protocol prefix.
-const regexIsUrl_2  = new RegExp("(.|..)*(\\/[a-zA-Z0-9\\-\\_]+)+\\.(png|jpg)");
+// const regexIsUrl_2  = new RegExp("(.|..)*(\\/[a-zA-Z0-9\\-\\_]+)+\\.(png|jpg)");
 
 // This is the distance in ThreeJS world units that an object must be from a picture display
 //  before we consider it within the picture display's activation range.
-const MAX_DISTANCE_FROM_PICTURE_DISPLAY_FOR_ACTIVATION = 200;
+const MAX_DISTANCE_FROM_PICTURE_DISPLAY_FOR_ACTIVATION = 1;
+
+const bVerbose = true;
 
 /**
  * Check if a string is a URL or not.
@@ -36,13 +39,25 @@ const MAX_DISTANCE_FROM_PICTURE_DISPLAY_FOR_ACTIVATION = 200;
 function isStringAUrl(srcUrl) {
     const errPrefix = `(isStringAUrl) `;
 
-    // console.warn(errPrefix + `FIX THIS!.`);
-    // return false;
-
     if (misc_shared_lib.isEmptySafeString(srcUrl))
         throw new Error(errPrefix + `The srcUrl parameter is empty.`);
 
-    return regexIsUrl_1.test(srcUrl) || regexIsUrl_2.test(srcUrl);
+    console.info(`${errPrefix} Checking if the string is a URL: ${srcUrl}.`);
+
+    const srcUrlLowerCase = srcUrl.toLowerCase();
+
+    // WARNING!  These regular expressions were disabled because they
+    //  hung not only the browser when testing certain URLs, but also
+    //  locked up the DevTools debugger.  The first one worked
+    //  but the second one locked up.  That is why we switched to a
+    //  simple extension test.
+    //
+    // return regexIsUrl_1.test(srcUrl) || regexIsUrl_2.test(srcUrl);
+
+    if (srcUrlLowerCase.endsWith(".png") || srcUrlLowerCase.endsWith(".jpg"))
+        return true;
+    else
+        return false;
 }
 
 /**
@@ -203,6 +218,10 @@ function createMaterialFromImage(srcUrl, bIsRepeated=false) {
 
     const threeJsMaterial = new THREE.MeshBasicMaterial();
 
+    if (bVerbose) {
+        console.info(`${errPrefix}Loading image: ${srcUrl}.`);
+    }
+
     const loader = new THREE.TextureLoader().load(
         // resource URL
         srcUrl,
@@ -216,12 +235,18 @@ function createMaterialFromImage(srcUrl, bIsRepeated=false) {
 
             // Assign the texture value to the material map when the texture is loaded.
             threeJsMaterial.map = theTexture;
+
+            if (bVerbose)
+                console.info(`${errPrefix}Resource LOADED: ${srcUrl}.`);
         },
         // This function will be called as the download of an
         //  image progresses.
         function ( xhr ) {
-            const pctLoaded = xhr.loaded / xhr.total * 100;
-            console.info(`${errPrefix}${pctLoaded}}% loaded.  Resource: ${srcUrl}.`);
+            if (bVerbose) {
+                const pctLoaded = xhr.loaded / xhr.total * 100;
+
+                console.info(`${errPrefix}${pctLoaded}}% loaded.  Resource: ${srcUrl}.`);
+            }
         },
         // This function will be called in the event of an error.
         function ( xhr ) {
@@ -263,12 +288,12 @@ function CubeAssetsColorsOrUrls() {
     this.pos_z = 0x000000;
     
      */
-    this.neg_x = 'orange';
-    this.pos_x = 'orange';
-    this.neg_y = 'orange';
-    this.pos_y = 'orange';
-    this.neg_z = 'orange';
-    this.pos_z = 'orange';
+    this.neg_x = 'mediumspringgreen';
+    this.pos_x = 'mediumspringgreen';
+    this.neg_y = 'mediumspringgreen';
+    this.pos_y = 'mediumspringgreen';
+    this.neg_z = 'mediumspringgreen';
+    this.pos_z = 'mediumspringgreen';
 }
 
 /**
@@ -317,6 +342,22 @@ function extendedMaterialsToThreeJsMaterials(aryExtendedMaterials) {
     	throw new Error(errPrefix + `The aryExtendedMaterials parameter value is an empty array.`);
 
     const aryThreeJsMaterials = [];
+
+    // We must use the surface name properties instead of iterating the
+    //  the extended material array with a for loop because the
+    // Mesh() constructor expects the materials to be in
+    // -x, +x, -y, +y, -z, +z order.
+    /*
+    aryExtendedMaterials.forEach(function(extendedMaterial) {
+        if (extendedMaterial.isImage) {
+            aryThreeJsMaterials.push(extendedMaterial.materialContent);
+        } else {
+            aryThreeJsMaterials.push(new THREE.MeshBasicMaterial({
+                color: extendedMaterial.materialContent
+            }));
+        }
+    });
+    */
 
     aryExtendedMaterials.forEach(function(extendedMaterial) {
         aryThreeJsMaterials.push(extendedMaterial.materialContent);
@@ -400,6 +441,8 @@ function CubeMaterials(cubeAssetsOrUrlObjs, dimensions) {
             // Yes, it is a URL.  Create a new material from the URL
             //  and assign it to the surface.
 
+            console.info(`${errPrefix} - Creating a new THREE.MeshBasicMaterial() object from the URL: ${numberOrStringVal}.`);
+
             let theMaterial = null;
 
             // Is it a GIF URL?
@@ -469,6 +512,7 @@ function CubeMaterials(cubeAssetsOrUrlObjs, dimensions) {
 
         let aryCubeMaterialsExt = [];
 
+        /*
         for (let propKey in self) {
             // Is it one of our cube surface properties?
             if (THREEJSSUPPORT.isValidSurfaceName(propKey)) {
@@ -480,6 +524,25 @@ function CubeMaterials(cubeAssetsOrUrlObjs, dimensions) {
                 aryCubeMaterialsExt.push(threeJsMaterialExtended);
             }
         }
+
+         */
+
+        // Push the materials in the order they are expected
+        //  by a cube object.
+        /*
+        aryCubeMaterialsExt.push(self.neg_x);
+        aryCubeMaterialsExt.push(self.pos_x);
+        aryCubeMaterialsExt.push(self.neg_y);
+        aryCubeMaterialsExt.push(self.pos_y);
+        aryCubeMaterialsExt.push(self.neg_z);
+        aryCubeMaterialsExt.push(self.pos_z);
+         */
+        aryCubeMaterialsExt.push(self.pos_x);
+        aryCubeMaterialsExt.push(self.neg_x);
+        aryCubeMaterialsExt.push(self.pos_y);
+        aryCubeMaterialsExt.push(self.neg_y);
+        aryCubeMaterialsExt.push(self.pos_z);
+        aryCubeMaterialsExt.push(self.neg_z);
 
         return new THREE.MeshFaceMaterial( aryCubeMaterialsExt );
     }
@@ -551,7 +614,7 @@ function PictureDisplay(pictureDisplayId, cubeAssetsOrUrlObjs,  position, rotati
     this.dtCreated = Date.now();
 
     /** @property {String} - A unique but human friendly name to assign to the ID. */
-    this.pictureDisplayId = pictureDisplayId;
+    this.idOfObject = pictureDisplayId;
 
     /** @property {Object|null} - This property keeps a reference to the
      *  the ThreeJS object that is created to represent this picture display
@@ -623,7 +686,13 @@ function PictureDisplay(pictureDisplayId, cubeAssetsOrUrlObjs,  position, rotati
 
         // Build the cube from the MeshFaceMaterial and CubeGeometry
         //   objects we built and return it.
-        return new THREE.Mesh( cubeGeometry,  extendedMaterialsToThreeJsMaterials(self.aryCubeMaterialsExt));
+        const newThreeJsObj = new THREE.Mesh( cubeGeometry,  extendedMaterialsToThreeJsMaterials(self.aryCubeMaterialsExt));
+
+        // Give other code the ability to detect that this object
+        //  is a picture display.
+        newThreeJsObj.userData.neo3DParentObj = self;
+
+        return newThreeJsObj;
     }
 
     /**
@@ -652,8 +721,7 @@ function PictureDisplay(pictureDisplayId, cubeAssetsOrUrlObjs,  position, rotati
         self.threeJsAvatar.scale.x = self.threeJsAvatar.scale.y = self.threeJsAvatar.scale.z = 1;
 
         // Set its "name" property to our ID.
-        self.threeJsAvatar.name = self.pictureDisplayId;
-
+        self.threeJsAvatar.name = self.idOfObject;
     }
 
     /**
@@ -676,13 +744,17 @@ function PictureDisplay(pictureDisplayId, cubeAssetsOrUrlObjs,  position, rotati
         //  camera's position and orientation.
         if (false) {
             let distance =
-                Math.abs(self.threeJsAvatar.position.distanceTo(g_ThreeJsCamera.position));
+                // Math.abs(self.threeJsAvatar.position.distanceTo(g_ThreeJsCamera.position));
+                trueDistanceFromObject3D(self.threeJsAvatar.position, g_ThreeJsCamera.position);
 
-            console.info(`${errPrefix}Distance from local user to picture display(${self.pictureDisplayId}) is: ${distance}`);
+            console.info(`${errPrefix}Distance from local user to picture display(${self.idOfObject}) is: ${distance}`);
         }
 
         // Update the state of the picture display based on the current world conditions
         //  and fire any functions triggered by the current world state.
+        // if (self.idOfObject.indexOf('hongfei') > 0) {
+        //     console.info(`${errPrefix}Updating picture display(${self.idOfObject})`);
+        // }
 
         // Are any of the participant's within our "activation" distance?
         if (PARTICIPANT_SUPPORT.isAnyParticipantWithinActivationDistance(
@@ -834,7 +906,7 @@ function PictureDisplayManager() {
             new PictureDisplay(pictureDisplayId, cubeAssetsOrUrlObjs, position, rotation, dimensions, funcActivate, funcDeactivate, activationDistance);
 
         // Assign it.
-        self.aryPictureDisplayObjs[newPictureDisplayObj.pictureDisplayId] = newPictureDisplayObj;
+        self.aryPictureDisplayObjs[newPictureDisplayObj.idOfObject] = newPictureDisplayObj;
 
         return newPictureDisplayObj;
     }
@@ -916,4 +988,4 @@ function PictureDisplayManager() {
  */
 const g_PictureDisplayManager = new PictureDisplayManager();
 
-export {CubeAssetsColorsOrUrls, PictureDisplay, PictureDisplayManager, g_PictureDisplayManager}
+export {CubeAssetsColorsOrUrls, isStringAUrl, PictureDisplay, PictureDisplayManager, g_PictureDisplayManager}

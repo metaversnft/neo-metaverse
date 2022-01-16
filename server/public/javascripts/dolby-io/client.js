@@ -3,6 +3,7 @@ import {g_ParticipantWrapperManager} from "../participant-helpers/participant-he
 import {processRemoteParticipantUpdate} from "../threejs/examples/animate-loop.js";
 import {RemoteParticipantUpdate, sendVoxeetCommand} from "./dolby-io-support.js";
 import {g_ThreeJsCamera} from "../objects/three-js-global-objects.js";
+import {g_GlobalState} from "../objects/global-state.js";
 
 const errPrefix = '(client.js) ';
 
@@ -151,6 +152,9 @@ VoxeetSDK.command.on('received', (participant, message) => {
       // Process the status update request from a remote participant.  Broadcast our
       //  current status to the network.
       sendVoxeetCommand(new RemoteParticipantUpdate(g_ThreeJsCamera));
+    } else if (receivedMessageObj.typePayload === 'FollowerModeUpdate') {
+      // Update our FOLLOWING status in case we are a FOLLOWER.
+      g_GlobalState.processFollowerModeUpdate(receivedMessageObj.payloadObj);
     }
   }
   catch(err) {
@@ -169,9 +173,9 @@ VoxeetSDK.command.on('received', (participant, message) => {
 const mainVoxeetSDK = async () => {
   const errPrefix = `(mainVoxeetSDK) `;
 
-  // WARNING!!  You should switch over to the DolbyIO token server paradigm
-  //  so you don't expose your API credentials in your Javascript code!
-  VoxeetSDK.initialize('<YOUR DOLBYIO API CLIENT KEY>', '<YOUR DOLBYIO API SECRET>');
+  // NOTE: You should switch over to token based user SDK
+  //  access ASAP, for security reasons!
+  VoxeetSDK.initialize('<YOUR DOLBY IO PUBLIC KEY>', 'YOUR DOLBYIO SECRET');
   try {
     await VoxeetSDK.session.open({ name: randomName });
     await initUI();

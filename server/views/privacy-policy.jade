@@ -1,0 +1,52 @@
+//- The view for our privacy policy page.
+// extends layout
+
+extends plain_page
+
+block content
+    style.
+        div#div-main
+        {
+            max-width: 800px;
+        }
+        div.common-style
+        {
+            padding: 10px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        p.make-bold {
+            font-weight: bold;
+        }
+
+        .orange-text {
+            color: orange;
+        }
+
+    div(id="div-main", class="container")
+        div(id="div-summary", class="table-bordered common-style")
+            h2
+                | Privacy Policy
+            p
+                | This privacy notice discloses the privacy practices for &nbsp;
+                span(style="text-decoration: underline;")
+                    | Neochex
+                span
+                    | . &nbsp; This privacy notice applies solely to information collected by this dApp.
+            h2
+                    | Information Collection, Use, and Sharing
+            p
+                | We collect usage statistics about your usage of the Neochex app.
+                | At this time, we do not store or
+                | collect any personally identifiable information about you, but we
+                | do store the pertinent details about your IP address, for use in
+                | determining a geographic of our user base and for some.
+
+
+        div(id="div-contact", class="table-bordered common-style")
+            h2
+                | Contact Us
+
+            p
+                | If you have any questions.  Please contact us at info@androidtechnologies.com

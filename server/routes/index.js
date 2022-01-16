@@ -10,7 +10,7 @@ router.get('/', function(req, res, next) {
 
     try
     {
-        res.render('index', { title: 'NEO METAVERSE' });
+        res.render('index', { title: 'NEO3D LIVE' });
     }
     catch (err)
     {

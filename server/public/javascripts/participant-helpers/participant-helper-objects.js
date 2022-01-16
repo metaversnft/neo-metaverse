@@ -6,14 +6,20 @@
 
 import * as THREE from '../threejs/build/three.module.js';
 import * as POINTERLOCK from "../threejs/examples/pointerlock.js"
-import {isLocalUserInConference, RemoteParticipantUpdate, sendVoxeetCommand} from "../dolby-io/dolby-io-support.js";
-import {g_ThreeJsCamera} from "../objects/three-js-global-objects.js";
+import {isLocalUserInConference, RemoteParticipantUpdate} from "../dolby-io/dolby-io-support.js";
+import {g_RolesList} from "../roles/user-roles.js";
+import {trueDistanceFromObject3D} from "../objects/object-participant-support.js";
 
 // import * as PARTICIPANT_SUPPORT from "../objects/object-participant-support";
 // import {SPATIAL_AUDIO_FIELD_WIDTH, SPATIAL_AUDIO_FIELD_HEIGHT} from "../dolby-io/ui.js";
 // import {THREEJS_WORLD_AUDIO_DISTANCE_THRESHOLD} from "../threejs/examples/pointerlock.js";
 
-const URL_PLACEHOLDER_VIDEO = "/video/NEO-LOGO-FULL-SPIN.mp4"; //  "/video/FROGGY-NO-AUDIO.mp4";
+const URL_PLACEHOLDER_VIDEO = "/video/NEO-LOGO-FULL-SPIN.mp4";
+
+/* If the distance between the local user and one of the participants whose role
+    is marked as leader is less than this distance, then the follower will
+    follow the leader. */
+const LEADER_ACTIVATION_DISTANCE = 100;
 
 // Object that acts like an associative array that keeps track of all the
 //  active video nodes created by this module.
@@ -113,6 +119,10 @@ function ParticipantWrapper(participant, stream) {
      *  from a Voxeet SDK generated event. */
     this.participantObj = participant;
 
+    /** @property {String} - The participant ID, hoisted up from the
+     *  raw JSON participant object provided by the Voxeet SDK. */
+    this.idOfObject = participant.id;
+
     /** @property {Object} - The Voxeet SDK stream object -  */
     this.streamObj = stream;
 
@@ -147,6 +157,13 @@ function ParticipantWrapper(participant, stream) {
      *  in the scene. */
     this.threeJsAvatar = null;
 
+    /** @property {Object} - Any custom data that we received from a
+     *   RemoteParticipantUpdate message broadcasted to us will be
+     *   attached to the customDataFromRemote property of the ParticipantWrapper object
+     *   that they create to represent us in their copy of the virtual world
+     *  should be attached to this property. */
+    this.customDataFromRemote = {};
+
     /**
      * This function returns TRUE if the Voxeet SDK participant object
      *  we carry has a video track associated with it, FALSE if not.
@@ -168,6 +185,21 @@ function ParticipantWrapper(participant, stream) {
     }
 
     /**
+     * This function returns TRUE if the participant this object
+     *  represents has the specified role assigned to them.
+     *  Otherwise FALSE is returned.
+     *
+     * @param {String} role - The role to check for.
+     *
+     * @return {boolean}
+     */
+    this.isRoleAssigned = function(role) {
+        if (!self.customDataFromRemote.localUserRoles)
+            return false;
+        return (self.customDataFromRemote.localUserRoles.includes(role));
+    }
+
+    /**
      * This function does some basic checks on this object's data
      *  members and throws an exception if any of the checks fail.
      *
@@ -185,6 +217,9 @@ function ParticipantWrapper(participant, stream) {
 
         if (!misc_shared_lib.isNonNullObjectAndNotArray(self.participantObj))
         	throw new Error(errPrefix + `The self.participantObj is not a valid object.`);
+
+        if (misc_shared_lib.isEmptySafeString(self.idOfObject))
+            throw new Error(errPrefix + `The self.idOfObject parameter is empty.`);
 
         // The participant may not have an active video stream (audio-only).
         // if (!misc_shared_lib.isNonNullObjectAndNotArray(self.streamObj))
@@ -504,7 +539,13 @@ function ParticipantWrapper(participant, stream) {
         self._adjustVideoSource();
 
         // Build the cube from a basic ThreeJS mesh and return it.
-        return new THREE.Mesh( cubeGeometry, cubeMaterials );
+        const newThreeJsObj = new THREE.Mesh(cubeGeometry, cubeMaterials);
+
+        // Give other code the ability to detect that this object
+        //  is a participant cube.
+        newThreeJsObj.userData.neo3DParentObj = self;
+
+        return newThreeJsObj;
     }
 
     /**
@@ -544,7 +585,7 @@ function ParticipantWrapper(participant, stream) {
         self.threeJsAvatar.name = self.participantObj.id;
 
         // Add the avatar to the scene.
-        POINTERLOCK.addObjectToScene(self.threeJsAvatar);
+        POINTERLOCK.addObjectToObjectsList(self.threeJsAvatar);
     }
 
     /**
@@ -814,6 +855,44 @@ function ParticipantWrapperManager() {
         return self.aryParticipantWrapperObjs[idOfParticipant];
     }
 
+    /**
+     * Finds the first leader in the list of participants that close enough
+     *  to us to be within the leader activation distance.
+     */
+    this.findFirstLeaderNearUs = function(activationDistance=LEADER_ACTIVATION_DISTANCE ) {
+        const methodName = self.constructor.name + '::' + `findFirstLeaderNearUs`;
+        const errPrefix = '(' + methodName + ') ';
+
+        const localUserId = getLocalUserParticipantId();
+
+        for (let participantId in self.aryParticipantWrapperObjs) {
+            const remoteParticipantObj = self.aryParticipantWrapperObjs[participantId];
+
+            // Is it the local user (aka is it "us")?
+            if (remoteParticipantObj.isLocalUser())
+                // Yes, ignore this object.
+                continue;
+
+            // Leader?
+            if (remoteParticipantObj.isRoleAssigned(g_RolesList.LEADER)) {
+                // Yes. Is the leader within the activation distance?
+                const distToLeader =
+                    // Use the remote participant object as the first parameter because
+                    //  our coordinates are the camera and therefore does not need
+                    //  any potential coordinate translations applied to it.
+                    trueDistanceFromObject3D(remoteParticipantObj.threeJsAvatar, self.getLocalUserParticipantWrapper().threeJsAvatar.position);
+
+                if (distToLeader <= LEADER_ACTIVATION_DISTANCE) {
+                    // Yes.
+                    return remoteParticipantObj;
+                }
+            }
+        }
+
+        // No leader found.
+        return null;
+    }
+
 
     /**
      * Find the participant wrapper object for the participant
@@ -909,7 +988,7 @@ function ParticipantWrapperManager() {
 
         return self.aryParticipantWrapperObjs[participant.id];
     }
-    
+
     /**
      * This method should be called from the VoxeetSDK.conference.on('streamUpdated')
      *  event handler.  If the REMOTE participant's streaming state has

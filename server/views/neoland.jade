@@ -10,7 +10,10 @@ block extra_javascript
 
     script(type="text/javascript" src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta2/dist/js/bootstrap.bundle.min.js" integrity="sha384-b5kHyXgcpbZJO/tY9Ul7kGkf1S0CWuKcCD38l8YkeH8z8QjE0GmW1gYU5S9FOnJ0" crossorigin="anonymous")
 
+    // script(type="text/javascript" src="/javascripts/bignumber/bignumber.js")
+
     // ------------------------ JAVASCRIPT ---------------------
+
     script(type="module", src="/javascripts/threejs/examples/pointerlock.js")
     script(type="module", src="/javascripts/threejs/examples/animate-loop.js")
 
@@ -30,7 +33,10 @@ block extra_javascript
 
     script(type="module"  src="./javascripts/dolby-io/utils.js")
     script(type="module"  src="./javascripts/dolby-io/ui.js")
-    script(src="https://kit.fontawesome.com/9a46dc54f8.js" crossorigin="anonymous")
+
+    // script(src="https://kit.fontawesome.com/9a46dc54f8.js" crossorigin="anonymous")
+
+    // script(type="text/javascript") (function() { let css = document.createElement('link'); css.href = 'https://use.fontawesome.com/releases/v5.1.0/css/all.css'; css.rel = 'stylesheet'; css.type = 'text/css'; document.getElementsByTagName('head')[0].appendChild(css); })();
 
     // WebSocket support for Sumerian code.
     script(src="/javascripts/websockets/websockets-client.js")
@@ -43,6 +49,9 @@ block extra_javascript
 
     // Our helper code for the DolbyIO SDK.
     script(type="module" src="./javascripts/dolby-io/dolby-io-support.js")
+
+    script(type="module"  src="/javascripts/objects/global-state.js")
+    script(type="module"  src="/javascripts/roles/user-roles.js")
 
     // Page support
     script(type="module"  src="/javascripts/page-support/neoland-page-support.js")
@@ -61,6 +70,9 @@ block header_css
 block content
     // TEMP CODE
     // div(class="video-container track-avatar" data-track-number="0" id="video-container-0" height="500px" width="1000px")
+    // div(id='start-world' class='fps-controls-keyboard-character-div toolbar-btn' title="Start the world.")
+        p(class='fps-controls-keyboard-character-p') Start The World.
+
     div(id="sfx-diagnostics" style="display: visible;")
         p
             span(class="sfx-diagnostics-label") (SFX Diagnostics)
@@ -102,6 +114,14 @@ block content
                                                     p(class='fps-controls-keyboard-character-p') S
                                                 div(class='fps-controls-graphic-div' title="Hold the 'S' key down to move backward")
                                                     img(class='fps-controls-arrow' src="/images/ui-controls/green-arrow-down-sml-1.png")
+                                            div(class="fps-info")
+                                                // BUY NFT
+                                                div(class='fps-controls-keyboard-character-div' title="Press the 'B' key to buy the NFT")
+                                                    p(id='buy-nft-button-p' class='fps-controls-keyboard-character-p') B
+                                                div(id='original-buy-button-div' class='fps-controls-graphic-div' title="Press the 'B' key to buy the NFT")
+                                                    img(class='fps-controls-arrow red-buy-button' src="/images/ui-controls/buy-nft-button-red-sml-2.png")
+                                                div(id='alternate-buy-button-div' class='fps-controls-graphic-div' title="Press the 'B' key to buy the NFT")
+                                                    img(class='fps-controls-arrow red-buy-button' src="/images/ui-controls/buy-nft-button-red-sml-2-b.png")
                                             div(class="fps-info")
                                                 // Esc/Exit
                                                 div(class='fps-controls-keyboard-character-div' title="Press the 'Esc' key to exit the world")

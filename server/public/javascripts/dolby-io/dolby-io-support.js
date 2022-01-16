@@ -2,6 +2,7 @@
 
 import {getLocalUserParticipantId} from "../participant-helpers/participant-helper-objects.js";
 import * as THREE from "../threejs/build/three.module.js";
+import {g_GlobalState} from "../objects/global-state.js";
 
 /*
 
@@ -165,6 +166,40 @@ function RequestRemoteParticipantStatuses() {
     this.idOfRequestingParticipant = getLocalUserParticipantId();
 }
 
+
+
+/**
+ * Convert the Voxeet SDK map of conference participants to a simple array.
+ *
+ * @param {boolean} bIncludeLocalUser - If TRUE, then the local user will
+ *  be included in the returned array.  If FALSE, then it won't be included.
+ *
+ * @return {Array<Object>} - Returns a simple array containing the conference
+ *  participants.
+ */
+function dolbyIoParticipantsMapToArray(bIncludeLocalUser=true) {
+    const errPrefix = `(dolbyIoParticipantsMapToArray) `;
+
+    if (typeof bIncludeLocalUser !== 'boolean')
+        throw new Error(errPrefix + `The value in the bIncludeLocalUser parameter is not boolean.`);
+
+    let retArray = [];
+
+    const mapParticipants = VoxeetSDK.conference.participants;
+
+    for (let participantKey of mapParticipants) {
+        let participantObj = VoxeetSDK.conference.participants.get(participantKey[0]);
+
+        if (!bIncludeLocalUser && g_LocalUserParticipantId === participantObj.id)
+            // Ignore the local user.
+            continue;
+
+        retArray.push(participantObj);
+    }
+
+    return retArray;
+}
+
 /**
  * This is the object that we broadcast and receive over the inter-participant
  *  network to update the avatar's for remote participants.  Obviously a
@@ -182,6 +217,15 @@ function RemoteParticipantUpdate(theCamera=null) {
 
     /** @property {String} - The ID of the participant this update object represents. */
     this.participantId = getLocalUserParticipantId();
+
+    /** @property {Object} - Any custom data that the broadcast recipients should
+     *   attach to the customDataFromRemote property of the ParticipantWrapper object
+     *   that they create to represent us in their copy of the virtual world
+     *  should be attached to this property. */
+    this.customData = {};
+
+    /** @property {String|null} - Include the roles assigned to the local user if any. */
+    this.customData.localUserRoles = g_GlobalState.localUserRoles;
 
     /** @property {THREE.Vector3} - The updated position of the participant. */
     this.positionUpdate = null;
@@ -206,4 +250,4 @@ function RemoteParticipantUpdate(theCamera=null) {
 
 const ParticipantStatuses = new ParticipantStatusesList();
 
-export {isLocalUserInConference, ParticipantStatuses, sendVoxeetCommand, RemoteParticipantUpdate, RequestRemoteParticipantStatuses};
+export {dolbyIoParticipantsMapToArray, isLocalUserInConference, ParticipantStatuses, sendVoxeetCommand, RemoteParticipantUpdate, RequestRemoteParticipantStatuses};

@@ -17,6 +17,8 @@ import {
     callMeWhenPageIsReady
 } from "../dolby-io/ui.js";
 import {restorePage, savePage} from '../misc/persistence.js';
+import {initializeThreeJS} from "../threejs/examples/pointerlock.js";
+import {isStringAUrl} from "../objects/picture-display.js";
 
 // The ID of the Three.js canvas DIV.
 const CANVAS_DIV_ID = 'canvas-div';
@@ -161,6 +163,77 @@ function processReceivedWebSocketMessage(eventdataObj) {
     };
 }
 
+let g_FlashBuyButtonInterval = null;
+const FLASH_BUY_BUTTON_DURATION_MS = 3000;
+const FLASH_BUY_BUTTON_INTERVAL_MS = 250;
+const jqOriginalBuyButtonSelector = $('#original-buy-button-div');
+const jqAlternateBuyButtonSelector = $('#alternate-buy-button-div');
+
+
+/**
+ * Flashes the BUY button when the user makes an NFT purchase.
+ */
+function flashBuyButton() {
+    const errPrefix = `(flashBuyButton) `;
+
+    function showOriginalBuyButton() {
+        jqOriginalBuyButtonSelector.show();
+        jqAlternateBuyButtonSelector.hide();
+    }
+
+    function showAlternateBuyButton() {
+        jqOriginalBuyButtonSelector.hide();
+        jqAlternateBuyButtonSelector.show();
+    }
+
+    let elapsedMs = 0;
+    let bToggle = false;
+
+    g_FlashBuyButtonInterval = setInterval(() => {
+
+        if (bToggle) {
+            // Show the BUY button with the alternate color scheme.
+            showAlternateBuyButton();
+        } else {
+            // Show the original BUY button.
+            showOriginalBuyButton();
+        }
+
+        bToggle = !bToggle;
+        elapsedMs += FLASH_BUY_BUTTON_INTERVAL_MS;
+
+        // Have we flashed long enough?
+        if (elapsedMs > FLASH_BUY_BUTTON_DURATION_MS) {
+            // Yes.  Stop flashing and restore the original BUY button.
+            clearInterval(g_FlashBuyButtonInterval);
+            g_FlashBuyButtonInterval = null;
+            showOriginalBuyButton();
+        }
+    }, FLASH_BUY_BUTTON_INTERVAL_MS);
+
+}
+
+/**
+ * Start the ThreeJS scene.
+ */
+function startWorld() {
+    // TODO: Remove this.
+    // isStringAUrl('https://neo3d-live.s3.amazonaws.com/booths-1/public/booths/neo-news-today/images/da-hongfei-neo-interview-w-chico-crypto-neotalk-devcon.png');
+
+    // WARNING:  Attempting to initialize the ThreeJS scene here instead of
+    //  in pointerlock.js leads to pictures not being displayed, despite
+    //  being loaded!
+    // Initialize the g_ThreeJsScene.
+    // initializeThreeJS();
+
+    console.info(`${errPrefix} Starting the ThreeJS animation loop.`);
+
+    animateLoop();
+
+    // Tell the UI module the world is now ready to be entered.
+    callMeWhenPageIsReady();
+}
+
 // -------------------- DOCUMENT READY HANDLER ---------------------
 $(document).ready(async function () {
     let errPrefix = '(neoland-lab-page-support.js::document_ready) ';
@@ -223,7 +296,13 @@ $(document).ready(async function () {
 
             // Save the user's choice to their cookie store either way.
             savePage();
-        })
+        });
+
+        // Onchange event handler for the audio input device selection list.
+        // TODO: Get rid of this event handler when done debugging!
+        // $('#start-world').click(function() {
+        //  startWorld();
+        // });
 
         // Initialize the DolbyIO Voxeet SDK.
         mainVoxeetSDK()
@@ -232,12 +311,7 @@ $(document).ready(async function () {
                 throw new Error(errPrefix + `The main VoxeetSDK() function did not return true.`);
             console.info(`${errPrefix} Dolby IO SDK initialized.`);
 
-            console.info(`${errPrefix} Starting the ThreeJS animation loop.`);
-
-            animateLoop();
-
-            // Tell the UI module the world is now ready to be entered.
-            callMeWhenPageIsReady();
+            startWorld();
 
             return true;
         });
@@ -249,4 +323,4 @@ $(document).ready(async function () {
     }
 });
 
-export {INSTRUCTIONS_ROW_ID, INSTRUCTIONS_DIV_ID};
+export {flashBuyButton, INSTRUCTIONS_ROW_ID, INSTRUCTIONS_DIV_ID};

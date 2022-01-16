@@ -12,12 +12,16 @@ import {getCenterOfThreeJsObject, getSimpleWidthOfThreeJsObject} from "../threej
 // The global Howler object controls the listener's position and orientation
 //  amongst other things and must be an object of type HowlerGlobal, not Howl.
 
-// DO NOT CREATE A NEW HOWLERGLOBAL OBJECT!  IT WILL HAVE A NULL
+// NOTE: DO NOT CREATE A NEW HOWLERGLOBAL OBJECT!  IT WILL HAVE A NULL
 //  CONTEXT AND SPATIAL OPERATIONS WILL FAIL!  INSTEAD, USE THE GLOBAL
 //  SINGLETON "HOWLER" OBJECT PROVIDED BY "howler.core.js"
 // const g_HowlerGlobalObj = new HowlerGlobal();
 
+// NOTE: The Howler object initialization should not take place until
+//  the user has initiated a gesture on the page.  Otherwise the
+//  audio context will not be allowed to be created by the browser!
 const g_HowlerGlobalObj = Howler;
+
 
 // Verbose messages or not.
 const bVerbose = true;
@@ -69,7 +73,7 @@ function threeJsRotationToHowlerVector3(threeJsObj) {
 
     // Convert a ThreeJS object's world direction to an angle around the Y-axis,
     //  as required by our use of Howler.js.
-    g_ThreeJsCamera.getWorldDirection(vecToReceiveWorldDir);
+    vecToReceiveWorldDir = g_ThreeJsCamera.getWorldDirection(vecToReceiveWorldDir);
     const theta = Math.atan2(vecToReceiveWorldDir.x, vecToReceiveWorldDir.z);
 
     if (false) {

@@ -537,7 +537,7 @@ my-text-class-text {
     /* background-color: cornflowerblue; */
     background-color: rgba(0, 0, 0, 0.5);
     position: absolute;
-    visibility: visible;
+    visibility: hidden;
 }
 
 /* -------------------- EZ-DIALOG --------------------- */
@@ -571,9 +571,10 @@ div.floating-div {
     border-color: #3c4bf4;
 }
 
-/* Make the ESCAPE key font smallerer. */
+/* Make the ESCAPE key font smaller. */
 #escape-key-p {
     font-size: 2rem;
+    margin-left: 25px;
 }
 
 /* The style for DIVs that hold the graphic associated with an FPS
@@ -583,7 +584,8 @@ div.floating-div {
     float: left;
     margin-left: 05px;
     height: 100px;
-    width: 100px;
+    /* width: 100px; */
+    width: 70px;
 }
 
 /* The style for IMGs that hold the an FPS movement graphic. */
@@ -709,6 +711,17 @@ img.waiting-room {
 .custom-select {
     display: block;
     margin-bottom: 10px;
+}
+
+/* The small red BUY button. */
+.red-buy-button {
+    width: 80px;
+    margin-top: 10px !important;
+}
+
+/* The alternate BUY button starts out hidden. */
+#alternate-buy-button-div {
+    display: none;
 }
 
 /* This didn't work.  Background image didn't show.

@@ -1,0 +1,85 @@
+//- The view for our Neochex Terms of Use policy page.
+extends plain_page
+
+block variables
+    - var titleVar = "Neochex - Terms of Use"
+
+block content
+    style.
+        div#div-main
+        {
+            max-width: 800px;
+        }
+        div.common-style
+        {
+            padding: 10px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        p.make-bold {
+            font-weight: bold;
+        }
+
+        .orange-text {
+            color: orange;
+        }
+
+    div(id="div-main", class="container")
+        div(id="div-summary", class="table-bordered common-style orange-text")
+            h2
+                | Terms of Use
+            p
+                | This Terms of Use document describes the terms and conditions you agree to by using the &nbsp;
+                span(style="text-decoration: underline;")
+                    | Neochex
+                span
+                    | &nbsp; dApp, which will be referred to as the "app" in this document,
+                    | and with Android Technologies, Inc. being referred to as the "the company" in this document.
+            p
+                | These terms govern your use of the app.  By interacting with the app in any way
+                | you indicate your agreement with these terms and any updates to these terms
+                | as such changes become necessary, and at their sole discretion, by the company.
+                | If you do not agree to these terms, now or in the event of any future modifications,
+                | you agree to stop using the app immediately.  Continuing to use the app after
+                | any changes to these terms take place constitutes your acceptance of the updated
+                | terms.
+
+            p
+                | The app is a dApp and may use text chat and voice capture technology when
+                | you interact with it.  Your use of this app constitutes an authorized
+                | communication by you with us.  You are responsible for any such
+                | communications and have sole responsibility for ensuring no one uses the
+                | app other than you, and thereby acting on your behalf in an unwanted or
+                | harmful manner that might affect any accounts you have with us or any
+                | other entity.
+
+            p
+                | You shall indemnify, defend and hold harmless the company
+                | for any punitive, incidental, special,
+                | or punitive damages or losses you may suffer while using the app.
+                | You agree to bear all risks of using it.  The company does not
+                | in any way guarantee the accuracy, quality, utility, or availability of the app nor does
+                | if offer, or is it responsible for, its proper performance or maintenance in any way.
+                | The company does not offer any warranty on the app, implied or otherwise.  These
+                | risks that you indemnify us against include, but are not limited to:
+                | price fluctuation risks of associated assets,
+                | internet web connectivity risks, any errors or failures that
+                | occur during your use of any associated software such as
+                | wallet software, trading software, etc., any failures in the
+                | NEO blockchain platform or associated tools, any failures or downtime
+                | involving our dApp or the associated smart contracts that
+                | support it, etc.
+            p
+                | You also understand that any price quotes given by this dApp are
+                | only for entertainment or research purposes.  The company is not
+                | responsible, directly or indirectly, for any losses you may incur
+                | by the use of that information or any other information provided
+                | by the app.
+
+        div(id="div-contact", class="table-bordered common-style orange-text")
+            h2
+                | Contact Us
+
+            p
+                | If you have any questions.  Please contact us at info@androidtechnologies.com

@@ -6,14 +6,23 @@ IMPORTANT!!! - When your rotation (camera) is 0, 0, 0, you are pointing in the N
 
 
 import * as THREE from "../threejs/build/three.module.js";
+import {g_GlobalState} from "../objects/global-state.js";
+import {g_ThreeJsCamera} from "../objects/three-js-global-objects.js";
 
 // The array of valid cube surface name, one for each side of the cube.
 const aryCubeSurfaceNames = ['neg_x', 'pos_x', 'neg_y', 'pos_y', 'neg_z', 'pos_z'];
+
+// Reuse these vectors for calculations to avoid creating new objects.
+let vecThreeJsObjWorldDir = new THREE.Vector3();
+let vecThreeJsObjWorldPos = new THREE.Vector3();
+let farVec3 = new THREE.Vector3()
 
 // Create an associative array that maps a surface name to the
 //  corresponding THREE.Vector3 object that would point an
 //  object with that rotation in the direction of the surface.
 let arySurfaceNameToRotation = [];
+
+let bVerbose = true;
 
 arySurfaceNameToRotation['neg_x'] = new THREE.Vector3(0, -Math.PI/2, 0);
 arySurfaceNameToRotation['pos_x'] = new THREE.Vector3(0, Math.PI, 0);
@@ -34,6 +43,35 @@ const xrefCardinalDirToSurfaceName = {
     east: 'neg_x',
     down: 'neg_y',
     up: 'pos_y'
+}
+
+/**
+ * Simple object to hold a width and a height field.
+ *
+ * @param {Number} width - A valid widht.
+ * @param {Number} height - A valid height.
+ */
+function Dimensions2D(width, height) {
+    const self = this;
+    const methodName = self.constructor.name + '::' + `constructor`;
+    const errPrefix = '(' + methodName + ') ';
+
+    /** @property {string} - A randomly generated unique ID for this object. */
+    this.id = misc_shared_lib.getSimplifiedUuid();
+
+    /** @property {Date} - The date/time this object was created. */
+    this.dtCreated = Date.now();
+
+    if (!misc_shared_lib.isZeroOrPositiveNumber(height))
+    	throw new Error(errPrefix + `The value in the width parameter is not a number: ${width}.`);
+    if (!misc_shared_lib.isZeroOrPositiveNumber(height))
+        throw new Error(errPrefix + `The value in the width parameter is not a number: ${width}.`);
+
+    /** @property {Number} - A valid width. */
+    this.width = width;
+
+    /** @property {Number} - A valid height. */
+    this.height = height;
 }
 
 
@@ -113,7 +151,10 @@ const WORLD_AXIS_Z = new THREE.Vector3(0, 0, 1);
 const g_AryCardinalDirections =  ['north', 'west', 'south', 'east'];
 
 // The angles in radians that correspond to each cardinal direction.
-const g_AryCardinalAnglesInRadians = [0, Math.PI / 2, Math.PI, -Math.PI / 2];
+// const g_AryCardinalAnglesInRadians = [0, Math.PI / 2, Math.PI, -Math.PI / 2];
+// ThreeJS seems to rotate things counter-clockwise, so we need to flip the
+//  the sign of the angles.
+const g_AryCardinalAnglesInRadians = [0, -Math.PI / 2, -Math.PI, Math.PI / 2];
 
 /**
  * This object contains the details necessary to perform a specific rotation
@@ -530,11 +571,133 @@ function cardinalDirectionToEuler3D(cardinalDir) {
     return new THREE.Vector3(0, angleOfRotationInRadians, 0);
 }
 
+/**
+ * Set up the picking ray of a raycaster to start at a desired object and then
+ *  extend in the direction of a target object.
+ *
+ * @param {THREE.Raycaster} theRaycaster - A Three.js raycaster object.
+ * @param {THREE.Object3D} originObj - The object to start the ray at.
+ * @param {THREE.Object3D} targetObj - The object to extend the ray to.
+ *
+ * @param {Boolean} bStopAtDestObj - If TRUE, the raycaster will stop at the
+ *  target object.  If FALSE, the raycaster will continue to extend into
+ *  infinity.
+ */
+function setRaycasterOriginToTargetObj(theRaycaster, originObj, targetObj, bStopAtDestObj=true  ) {
+    const errPrefix = `(setRaycasterOriginToTargetObj) `;
+
+    if (!(theRaycaster instanceof THREE.Raycaster))
+        throw new Error(errPrefix + `The value in the theRaycaster parameter is not a THREE.Raycaster object.`);
+
+    if (!(originObj instanceof THREE.Object3D))
+        throw new Error(errPrefix + `The value in the originObj parameter is not a THREE.Object3D object.`);
+
+    if (!(targetObj instanceof THREE.Object3D))
+        throw new Error(errPrefix + `The value in the targetObj parameter is not a THREE.Object3D object.`);
+
+    // This only creates a vector that points from the originObj to the targetObj,
+    //  with no regard to what direction the origin object is facing (i.e. -
+    //  it's current rotation.
+    // Create a direction that points from the origin object to the target object.
+    // theDirection.subVectors(targetObj.position, originObj.position).normalize()
+
+    /*
+    if ( g_ThreeJsCamera && g_ThreeJsCamera.isPerspectiveCamera ) {
+        //     g_Mouse.x = ( event.clientX / window.innerWidth ) * 2 - 1;
+        //     g_Mouse.y = - ( event.clientY / window.innerHeight ) * 2 + 1;
+        let pseudoMouse = {};
+
+        pseudoMouse.x = originObj.position.x;
+        pseudoMouse.y = originObj.position.y;
+
+        theRaycaster.ray.origin.setFromMatrixPosition( g_ThreeJsCamera.matrixWorld );
+        theRaycaster.ray.direction.set( pseudoMouse.x, pseudoMouse.y, 0.5 ).unproject( g_ThreeJsCamera ).sub( theRaycaster.ray.origin ).normalize();
+        theRaycaster.camera = g_ThreeJsCamera;
+
+    } else if ( g_ThreeJsCamera && g_ThreeJsCamera.isOrthographicCamera ) {
+
+        // set origin in plane of g_ThreeJsCamera
+        theRaycaster.ray.origin.set( pseudoMouse.x, pseudoMouse.y, ( g_ThreeJsCamera.near + g_ThreeJsCamera.far ) / ( g_ThreeJsCamera.near - g_ThreeJsCamera.far ) ).unproject( g_ThreeJsCamera );
+        theRaycaster.ray.direction.set( 0, 0, - 1 ).transformDirection( g_ThreeJsCamera.matrixWorld );
+        theRaycaster.camera = g_ThreeJsCamera;
+
+    } else {
+        console.error(`${errPrefix}THREE.Raycaster: Unsupported g_ThreeJsCamera type: ${g_ThreeJsCamera.type}.`);
+    }
+    */
+
+    // Convert the ThreeJS object's position to world positions.
+    vecThreeJsObjWorldPos = originObj.getWorldPosition(vecThreeJsObjWorldPos);
+
+    // Get the origin object's current direction (i.e. - in what direction
+    //  it is facing).
+    vecThreeJsObjWorldDir = originObj.getWorldDirection(vecThreeJsObjWorldDir);
+
+    // TODO: Find out why all the axes appears to be flipped and then
+    //  remove this code.
+    vecThreeJsObjWorldDir.x *= -1;
+    vecThreeJsObjWorldDir.y *= -1;
+    vecThreeJsObjWorldDir.z *= -1;
+
+    // Set the picking ray at the origin object's position, and extend it
+    //  in the direction of the target object.
+    theRaycaster.set(vecThreeJsObjWorldPos, vecThreeJsObjWorldDir);
+
+    if (g_GlobalState.breakHerePlease) {
+        const raycasterDetailsStr = raycasterDetailsToString(theRaycaster);
+        console.info(`${errPrefix}Raycaster details - ${raycasterDetailsStr}`);
+    }
+
+    // Is an infinite ray desired?
+    /*
+    if (bStopAtDestObj)
+        // No.  Stop the ray at the target object.
+        theRaycaster.far = farVec3.subVectors(targetObj.position, originObj.position).length();
+     */
+}
+
+/**
+ * Returns a string that shows the XYZ coordinates of a THREE.Vector3 object.
+ *
+ * @param {THREE.Vector3} vec3 - The THREE.Vector3 object to show.
+ *
+ * @return {string}
+ */
+function vec3ToString(vec3) {
+    const errPrefix = `(vec3ToString) `;
+
+    if (!(vec3 instanceof THREE.Vector3))
+        throw new Error(errPrefix + `The value in the vec3 parameter is not a THREE.Vector3 object.`);
+
+    return `(x: ${vec3.x}, y: ${vec3.y}, z: ${vec3.z})`;
+}
+
+/**
+ * Returns a string that shows the XYZ coordinates and direction
+ *  of a THREE.Raycaster object.
+ *
+ * @param {THREE.Raycaster} theRaycaster - The THREE.Raycaster object to show.
+ *
+ * @return {string}
+ */
+function raycasterDetailsToString(theRaycaster) {
+    const errPrefix = `(raycasterDetailsToString) `;
+
+    if (!(theRaycaster instanceof THREE.Raycaster))
+        throw new Error(errPrefix + `The value in the theRaycaster parameter is not a THREE.Raycaster object.`);
+
+    const raycastOriginStr = vec3ToString(theRaycaster.ray.origin);
+    const raycastDirectionStr = vec3ToString(theRaycaster.ray.direction);
+
+    return `Raycaster: origin: ${raycastOriginStr}, direction: ${raycastDirectionStr}, far: ${theRaycaster.far}`;
+}
+
 export {
     cardinalDirectionToEuler3D,
     cardinalDirectionToRotation,
     cardinalDirectionToEulerAngle,
     ceilingOrFloorToEulerAngle,
+    Dimensions2D,
     DEFAULT_CARDINAL_DIRECTION,
     extendedCardinalDirToSurfaceName,
     getBoundingBoxOfThreeJsObject,
@@ -542,6 +705,9 @@ export {
     getSimpleWidthOfThreeJsObject,
     isValidSurfaceName,
     RotationDetails,
+    raycasterDetailsToString,
     rotateCardinalDirFromBaseDir,
+    setRaycasterOriginToTargetObj,
     surfaceNameToRotation,
+    vec3ToString,
     WORLD_AXIS_X, WORLD_AXIS_Y, WORLD_AXIS_Z};

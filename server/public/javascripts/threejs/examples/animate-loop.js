@@ -5,12 +5,27 @@ import {
     g_ParticipantWrapperManager,
     getLocalUserParticipantId
 } from "../../participant-helpers/participant-helper-objects.js";
-import {g_TelevisionDisplayManager} from "../../objects/television.js";
+import {g_TelevisionDisplayManager, TelevisionDisplay} from "../../objects/television.js";
 import {g_PictureDisplayManager} from "../../objects/picture-display.js";
 
 import * as POINTERLOCK from "./pointerlock.js";
-import {makeBoxInScene_original} from "./pointerlock.js";
-import {g_ThreeJsRaycaster, g_ThreeJsCamera, g_ThreeJsObjects, g_ThreeJsScene, g_ThreeJsRenderer, g_ThreeJsControls} from "../../objects/three-js-global-objects.js";
+import {makeBoxInScene_original, testGltf} from "./pointerlock.js";
+import {
+    g_AnimationMixers,
+    g_ClipActions,
+    g_LocalUserParticipantWrapperObj,
+    g_ThreeJsCamera,
+    g_ThreeJsClock,
+    g_ThreeJsObjects,
+    g_ThreeJsScene,
+    g_ThreeJsRenderer,
+    g_ThreeJsControls,
+    g_ParticipantWrapperObjsInScene,
+    g_ThreeJsAvatarObjectsInScene,
+    assignLocalUserParticipantWrapperObj,
+    clearParticipantWrapperObjsInScene,
+    clearThreeJsAvatarObjectsInScene,
+} from "../../objects/three-js-global-objects.js";
 
 import * as THREE from '../build/three.module.js';
 import {
@@ -18,6 +33,7 @@ import {
     setListenerPositionAndOrientation
 } from "../../sound-effects-support/howler-support.js";
 import {
+    dolbyIoParticipantsMapToArray,
     isLocalUserInConference,
     ParticipantStatuses,
     RemoteParticipantUpdate,
@@ -30,6 +46,61 @@ import {
     setLocalUserSpatialAudioPosition,
     startStopVideo
 } from "../../dolby-io/ui.js";
+import {g_GlobalState} from "../../objects/global-state.js";
+import {g_RolesList} from "../../roles/user-roles.js";
+import {
+    getNeo3DParentObj,
+    isOwnedByParticipantWrapper,
+    isOwnedByPictureDisplay,
+    isOwnedByTelevisionDisplay
+} from "../../objects/object-detectors.js";
+import {
+    raycasterDetailsToString,
+    setRaycasterOriginToTargetObj,
+    vec3ToString
+} from "../../threejs-support/threejs-support-code.js";
+import {trueDistanceFromObject3D} from "../../objects/object-participant-support.js";
+import {g_NftManagerForGhostmarket} from "../../neo/nft/buy-ghostmarket-nft.js";
+import {
+    g_GhostMarketApiHelper,
+    testGhostMarketAssetCall_promise,
+    testNftBid_async
+} from "../../ghostmarket/ghostmarket-api-helper.js";
+import {flashBuyButton} from "../../page-support/neoland-page-support.js";
+import {g_NeoLineHelper} from "../../neo/neoline-helpers.js";
+
+const errPrefix = '(animate-loop) ';
+
+// TODO: Create a better away to set the NFT auction ID on Ghostmarket
+//  than the current technique of passing it as a GET argument.
+const urlArgs = getUrlArguments();
+
+let currentNftAuctionIdStr = urlArgs['auction_id'];
+let currentNftAuctionId = null;
+
+try {
+    if (!misc_shared_lib.isEmptySafeString(currentNftAuctionIdStr)) {
+        currentNftAuctionId = parseInt(currentNftAuctionIdStr);
+        console.info(`${errPrefix}Current NFT auction ID is: ${currentNftAuctionId}`);
+    }
+}
+catch(err) {
+        console.warn(`${errPrefix} Did not find an auction ID in the URL query arguments.`);
+}
+
+
+// This variable helps doing custom tracing in Chrome DevTools.
+//  See the keystroke processing code to see which keystroke
+//  sets this variable to TRUE.  Then, put a block of code
+//  in the part of the code that you want to dynamically
+//  trigger a breakpoint like this:
+/*
+    if (g_BreakHerePlease)
+        // This aids tracing using Chrome DevTools.  See pointerlock.js
+        //  for the keystroke that sets g_BreakHerePlease to TRUE.
+        console.info(`${errPrefix}Set DevTools breakpoint here.`);
+ */
+let g_BreakHerePlease = false;
 
 // This constant controls how long we wait before making an update
 //  call to the DolbyIO spatial audio API with the local user's
@@ -41,7 +112,27 @@ const SPATIAL_AUDIO_UPDATE_INTERVAL_MS = 1000;
 //  or made a significant movement.
 const AUTO_LOGOUT_DELAY_SECONDS = 60 * 10; // 10 minutes.
 
-const bVerbose = true;
+// This controls the speed at which a follower will pursue
+//  the leader each animation frame.
+const FOLLOWER_LERP_ALPHA = 0.01;
+
+// When we are this close or closer to the leader we will stop
+//  following the leader.
+const FOLLOWER_COMFORT_ZONE_DISTANCE = 20;
+
+const bVerbose = false;
+
+// Controls lerp mode, used mostly for testing FOLLOWER mode.
+let bLerp = true;
+
+// Reuse these variables to save on new object creations.
+let vecCameraWorldDirBefore = new THREE.Vector3();
+let vecCameraWorldDir = new THREE.Vector3();
+let vecCameraWorldPos = new THREE.Vector3();
+let vecLeaderWorldPos = new THREE.Vector3();
+let vecToLookAtPos = new THREE.Vector3();
+let vecObjWorldPos = new THREE.Vector3();
+
 
 // These are the variables that support the movement system.
 let moveForward = false;
@@ -49,6 +140,9 @@ let moveBackward = false;
 let moveLeft = false;
 let moveRight = false;
 let canJump = false;
+
+// For raycasting operations.
+let ourRaycaster = new THREE.Raycaster();
 
 // This variable tracks the time between animateLoop() calls.
 let prevTime = performance.now();
@@ -66,9 +160,46 @@ let g_LocalUserParticipantId = null;
 const velocity = new THREE.Vector3();
 const direction = new THREE.Vector3();
 
-const errPrefix = '(animate-loop) ';
-
 let bWasLoggedOutAlready = false;
+
+const g_Raycaster = new THREE.Raycaster();
+const g_Mouse = new THREE.Vector2();
+
+/**
+ * Simple object that is send across the broadcast system
+ *  when a LEADER wants the FOLLOWERS to start/resume
+ *  FOLLOWING or stop FOLLOWING.
+ *
+ * @param {String} statusOnOff - 'on' to start/resume
+ *  following, 'off' to stop following.
+ *
+ * @constructor
+ */
+function FollowerModeUpdate(statusOnOff) {
+    if (misc_shared_lib.isEmptySafeString(statusOnOff))
+        throw new Error(errPrefix + `The status parameter is empty.`);
+
+    if (!['on', 'off'].includes(statusOnOff))
+        throw new Error(errPrefix + `The statusOnOff parameter is invalid: ${statusOnOff}.`);
+
+    /** @property {String} - 'on' to start/resume following, 'off' to stop followinwg */
+    this.status = statusOnOff;
+}
+
+/**
+ * This function is called when the mouse moves.  It keeps
+ *  track of the current mouse coordinates to facilitate
+ *  ray tracing operations.
+ *
+ * @param {Object} event - The mouse event object.
+ */
+function onMouseMoveForAnimateLoop( event ) {
+
+    // calculate mouse position in normalized device coordinates
+    // (-1 to +1) for both components
+    g_Mouse.x = ( event.clientX / window.innerWidth ) * 2 - 1;
+    g_Mouse.y = - ( event.clientY / window.innerHeight ) * 2 + 1;
+}
 
 /**
  * Update the diagnostics panel with important information about the
@@ -102,7 +233,7 @@ const resetKeys = function() {
 //  of units per keypress.  Instead, it applies a constant velocity
 //  as long as the key is held down.  The direction of the movement
 //  is determined by the key pressed.
-const onKeyDown = function ( event ) {
+const onKeyDown = async function ( event ) {
     switch ( event.code ) {
         case 'ArrowUp':
         case 'KeyW':
@@ -124,10 +255,148 @@ const onKeyDown = function ( event ) {
             moveRight = true;
             break;
 
-        // ROS: Create a new box whenever the 'B' key is pressed.
         case 'KeyB':
-            makeBoxInScene_original();
+            // Purchase an NFT.
+            // g_NftManagerForGhostmarket.purchaseNFt();
+
+            // TODO: Testing some Ghostmarket API calls for now.
+            // testGhostMarketAssetCall_promise();
+
+            // Do they have Neoline installed?
+            if (g_NeoLineHelper.isNeoLineReady) {
+                flashBuyButton();
+                testNftBid_async(currentNftAuctionId);
+            } else {
+                alert(`You need to have the Neoline extension installed to buy NFTs.`);
+                return;
+            }
             break;
+
+        case 'KeyG':
+            // Set/Unset the flag that assists with custom tracing in Chrome DevTools.
+            g_GlobalState.breakHerePlease = !g_GlobalState.breakHerePlease;
+            break;
+
+        case 'KeyF':
+            // Toggle the FOLLOW mode state tracker variable.
+            g_GlobalState.isFollowingByFollowersDesired = !g_GlobalState.isFollowingByFollowersDesired;
+
+            if (g_GlobalState.isFollowingByFollowersDesired) {
+                // Tell all followers to start/resume following the leader.
+                sendVoxeetCommand(new FollowerModeUpdate('on'));
+
+                console.info(`${errPrefix}Following mode STARTED/RESUMED.`);
+            } else {
+                // Tell all followers to stop following the leader.
+                sendVoxeetCommand(new FollowerModeUpdate('off'));
+
+                console.info(`${errPrefix}Following mode STOPPED.`);
+            }
+            break;
+        case 'KeyI':
+            // Dump all the objects the camera is looking at.
+            // Set the direction of the picking ray from the position and orientation of the
+            //  participant's avatar object to the target object.
+            ourRaycaster.setFromCamera(g_Mouse, g_ThreeJsCamera);
+            // setRaycasterOriginToTargetObj(ourRaycaster, theParticipantWrapperObj.threeJsAvatar, targThreeJsObj);
+
+            if (g_GlobalState.breakHerePlease) {
+                const raycasterDetailsStr = raycasterDetailsToString(ourRaycaster);
+                console.info(`${errPrefix}Raycaster details - ${raycasterDetailsStr}`);
+            }
+
+            // Is the participant looking at the target object with no objects in between?  If there
+            //  are no objects in between the participant and the target object, then the participant
+            //  should be the first element of the intersection array.
+            const aryObjectsLookedAt = ourRaycaster.intersectObjects(g_ThreeJsObjects, true);
+
+            console.info(`================ BEGIN: RAYCAST RESULTS  =====================`);
+
+            if (aryObjectsLookedAt && aryObjectsLookedAt.length > 0) {
+                aryObjectsLookedAt.forEach((objLookedAt) => {
+                    const neo3DObj = getNeo3DParentObj(objLookedAt.object);
+
+                    const instanceTypeOrName = neo3DObj.constructor.name ? neo3DObj.constructor.name : neo3DObj.name;
+                    const idOfObject = neo3DObj.idOfObject ? neo3DObj.idOfObject : '(idOfObject field not found)';
+
+                    if (neo3DObj)
+                        console.info(`${errPrefix}Camera is looking at object type([${instanceTypeOrName}]) with ID: ${idOfObject}.`);
+                });
+
+            } else {
+                console.warn(`${errPrefix}No objects looked at.`);
+            }
+            console.info(`================  END: RAYCAST RESULTS  =====================`);
+            break;
+        case 'KeyL':
+            // Toggle Lerp ON/OFF for those participants that are in FOLLOWER mode.
+            bLerp = !bLerp;
+            break;
+        // ROS: Mute/unmute the microphone.
+        case 'KeyM':
+            muteOrUnmuteMicrophone();
+            break
+        // ROS: Reset the camera to the default position.
+        case 'KeyR':
+            g_ThreeJsCamera.position.set( 0, 0, 0 );
+            g_ThreeJsCamera.rotation.set( 0, 0, 0 );
+            resetKeys();
+            break;
+        // ROS: Teleport to the desired location..
+        case 'KeyT':
+            /* NEO SMART ECONOMY BOOTH
+            g_ThreeJsCamera.position.set( 5, 10, -508 );
+            g_ThreeJsCamera.rotation.set( 0, 0.02, 0 );
+
+            Position: 38.49198297771283, 10, -390.08445300270375, Rotation: -2.2594967712047125, 1.5060172599284252, 2.260527223390817
+             */
+            // ToTheMoon Universe booth.
+            // g_ThreeJsCamera.position.set( 29, 10, -390 );
+            // g_ThreeJsCamera.rotation.set( -2.26, 1.5, 2.26 );
+
+            // g_ThreeJsCamera.position.set( -54.75938473118033, 10, -173.9651652641706 );
+            // g_ThreeJsCamera.rotation.set( 0.22549999999999978, 1.5555401367686108e-16, -3.179106723449991e-17 );
+
+            // intersectObjects() returns nothing.
+            // g_ThreeJsCamera.position.set( -48.30455964483913, 10, -476.24551909713205 );
+            // g_ThreeJsCamera.rotation.set( 0.029262175218430882, 0.13394331749361335, -0.003908859427330066 );
+
+            // NEO Devcon 2019 video in the NNT booth.
+            // g_ThreeJsCamera.position.set( -55.4473819455961, 10, -172.15814801798007 );
+            // g_ThreeJsCamera.rotation.set( 0.1945015170629249, 0.003924577329778429, -0.0007731079169285207 );
+
+            // Left mirror.
+            // g_ThreeJsCamera.position.set( 29.64845034603772, 10, -244.6419912367911 );
+            // g_ThreeJsCamera.rotation.set( -0.8477796280201201, 1.5514576478510764, 0.8476868517594434 );
+
+            // Da Hong Fei picture.
+            // g_ThreeJsCamera.position.set( -3.2643052282827476, 10.000000000000004, -553.6757047623339 );
+            // g_ThreeJsCamera.rotation.set( 0.12300219176933852, 0.0059546696549833905, -0.0007361492409785167 );
+
+            // NFT Showcase.
+            // g_ThreeJsCamera.position.set( 990.7345301597753, 10, -234.8214395796359 );
+            // g_ThreeJsCamera.rotation.set( -2.8971618123947107, 1.3479923364318556, 2.902974280432254 );
+
+            // testGltf();
+
+            // Test getting the details for a specific NFT auction.
+            const auctionDetailsObj = await g_GhostMarketApiHelper.getAuctionDetails_promise('somniumwave', 136, true)
+            .catch(err => {
+                // Convert the error to a promise rejection.
+                let errMsg =
+                    errPrefix + misc_shared_lib.conformErrorObjectMsg(err);
+
+               console.error(errMsg + ' - promise');
+            });
+
+            console.info(errPrefix + `auctionDetailsObj object:`);
+            console.dir(auctionDetailsObj, {depth: null, colors: true});
+
+            break;
+        // ROS: Turn the camera ON and OFF.
+        case 'KeyV':
+            startStopVideo();
+            break
         case 'KeyX':
             // Update the display of the current listener position and
             //  orientation and the sound effect(s) belonging to
@@ -141,11 +410,21 @@ const onKeyDown = function ( event ) {
 
             console.warn(`${errPrefix}[HOWL LISTENER] - position: ${howlListenerPosition.x}, ${howlListenerPosition.y}, ${howlListenerPosition.z} - orientation: ${howlListenerOrientation.x}, ${howlListenerOrientation.y}, ${howlListenerOrientation.z}`);
             
+            // Create the statements for a Teleport command using the camera..
+            console.info(`g_ThreeJsCamera.position.set( ${g_ThreeJsCamera.position.x}, ${g_ThreeJsCamera.position.y}, ${g_ThreeJsCamera.position.z} );`);
+            console.info(`g_ThreeJsCamera.rotation.set( ${g_ThreeJsCamera.rotation.x}, ${g_ThreeJsCamera.rotation.y}, ${g_ThreeJsCamera.rotation.z} );`);
+
+            // Show the camera world direction.
+            vecCameraWorldDir = g_ThreeJsCamera.getWorldDirection( vecCameraWorldDir );
+            const vecCameraWorldDirStr = vec3ToString( vecCameraWorldDir );
+
+            console.info(`${errPrefix}Camera world direction: ${vecCameraWorldDirStr}.`);
+
             if (aryAttachedSoundObjs.length > 0) {
                 aryAttachedSoundObjs.forEach((soundPlayByHowlObj) => {
                     const thePos = soundPlayByHowlObj.getPosition3D();
                     const theOrientation = soundPlayByHowlObj.getOrientation3D();
-                    console.warn(`${errPrefix}[${idOfDesiredAsset}] - position: ${thePos.x}, ${thePos.y}, ${thePos.z} - orientation: ${theOrientation.x}, ${theOrientation.y}, ${theOrientation.z}`);
+                    console.warn(`${errPrefix}[${idOfDesiredAsset}] - position: ${thePos.x}, ${thePos.y}, ${thePos.z} - Howl3D orientation: ${theOrientation.x}, ${theOrientation.y}, ${theOrientation.z}`);
                 });
             } else {
                 console.warn(`${errPrefix}Unable to find the picture-with-looping-bell-1 sound.`);
@@ -159,20 +438,6 @@ const onKeyDown = function ( event ) {
             });
 
             break;
-        // ROS: Mute/unmute the microphone.
-        case 'KeyM':
-            muteOrUnmuteMicrophone();
-            break
-        // ROS: Reset the camera to the default position.
-        case 'KeyR':
-            g_ThreeJsCamera.position.set( 0, 0, 0 );
-            g_ThreeJsCamera.rotation.set( 0, 0, 0 );
-            resetKeys();
-            break;
-        // ROS: Turn the camera ON and OFF.
-        case 'KeyV':
-            startStopVideo();
-            break
         case 'Space':
             if (canJump === true)
                 velocity.y += 350;
@@ -364,38 +629,9 @@ function processRemoteParticipantUpdate(remoteParticipantUpdateObj) {
     // Change the remote participant's avatar to match the position and
     //  rotation of the remote participant's camera in the ThreeJS scene.
     remoteParticipantObj.updateAvatar(remoteParticipantUpdateObj);
-}
 
-/**
- * Convert the Voxeet SDK map of conference participants to a simple array.
- *
- * @param {boolean} bIncludeLocalUser - If TRUE, then the local user,
- *  otherwise don't.
- *
- * @return {Array<Object>} - Returns a simple array containing the conference
- *  participants.
- */
-function dolbyIoParticipantsMapToArray(bIncludeLocalUser=false) {
-    const errPrefix = `(dolbyIoParticipantsMapToArray) `;
-
-    if (typeof bIncludeLocalUser !== 'boolean')
-    	throw new Error(errPrefix + `The value in the bIncludeLocalUser parameter is not boolean.`);
-
-    let retArray = [];
-
-    const mapParticipants = VoxeetSDK.conference.participants;
-
-    for (let participantKey of mapParticipants) {
-        let participantObj = VoxeetSDK.conference.participants.get(participantKey[0]);
-
-        if (!bIncludeLocalUser && g_LocalUserParticipantId === participantObj.id)
-            // Ignore the local user.
-            continue;
-
-        retArray.push(participantObj);
-    }
-
-    return retArray;
+    // Carry over any custom data from the remote participant.
+    remoteParticipantObj.customDataFromRemote = remoteParticipantUpdateObj.customData;
 }
 
 /**
@@ -514,6 +750,20 @@ setInterval(() => {
     }
 }, 500);
 
+/**
+ * Facilitate the animation playing of any GLTF animations we loaded.
+ */
+function doGltfAnimations() {
+    const errPrefix = `(doGltfAnimations) `;
+
+    for (let animMixerId in g_AnimationMixers) {
+        const mixer = g_AnimationMixers[animMixerId];
+
+        mixer.update( g_ThreeJsClock.getDelta() );
+    }
+}
+
+
 
 /**
  * Animate the g_ThreeJsScene.
@@ -522,6 +772,11 @@ async function animateLoop() {
     const errPrefix = `(animateLoop) `;
 
     try {
+        // Is the flag set that stops rendering?
+        if (g_GlobalState.setRenderDisableFlag())
+            // Yes, just exit.
+            return;
+
         requestAnimationFrame(animateLoop);
 
         const currentAnimLoopTime = new Date();
@@ -529,7 +784,8 @@ async function animateLoop() {
         // Keep the local user participant ID variable updated.
         const currentId = getLocalUserParticipantId();
 
-        const localUserParticipantWrapperObj = g_ParticipantWrapperManager.getLocalUserParticipantWrapper();
+        // Keep the local user participant object variable updated.
+        assignLocalUserParticipantWrapperObj(g_ParticipantWrapperManager.getLocalUserParticipantWrapper());
 
         // If it has changed, show it in the diagnostics panel.
         if (currentId !== g_LocalUserParticipantId) {
@@ -537,15 +793,132 @@ async function animateLoop() {
             updateDiagnosticsPanel(g_LocalUserParticipantId);
         }
 
+        // Keep the list of participant wrapper objects in the scene
+        //  and the list of ThreeJS avatar objects that belong to each
+        //  participant in the scene updated.  Clear the current contents
+        //  first.
+        clearThreeJsAvatarObjectsInScene();
+        clearParticipantWrapperObjsInScene();
+
+        if (isLocalUserInConference()) {
+            // Convert the Voxeet participants array to an array of ThreeJS objects.
+            const aryParticipants = dolbyIoParticipantsMapToArray();
+
+            aryParticipants.forEach((participant) => {
+                // Find our participant wrapper object for this Voxeet participant.
+                const participantWrapperObj = g_ParticipantWrapperManager.findParticipantWrapperById(participant.id);
+
+                if (participantWrapperObj) {
+                    // Add it.
+                    g_ParticipantWrapperObjsInScene.push(participantWrapperObj);
+                    g_ThreeJsAvatarObjectsInScene.push(g_LocalUserParticipantWrapperObj.threeJsAvatar)
+                }
+            });
+        }
+
         const currentTime = performance.now();
 
+        // Keep any GLTF animations running.
+        doGltfAnimations();
+
+        // ----------------- LOCAL USER ROLE BEHAVIORS -----------------
+
+
+        // >>>>> ROLE: FOLLOWER
+
+        // If the local user is a follower, then look for a leader near to us.
+        if (g_GlobalState.localUserRoles.includes(g_RolesList.FOLLOWER)) {
+
+            // Is FOLLOWING mode on?
+            if (g_GlobalState.isFollowerFollowing) {
+                // We are a follower and we are following.  Is there a leader near us?
+                const leaderParticipantWrapperObj =
+                    g_ParticipantWrapperManager.findFirstLeaderNearUs();
+
+                if (leaderParticipantWrapperObj) {
+                    vecCameraWorldDirBefore = g_ThreeJsCamera.getWorldDirection(vecCameraWorldDirBefore);
+
+                    if (bVerbose) {
+                        const vecCameraWorldDirAfterStr = vec3ToString(vecCameraWorldDirBefore);
+                        console.info(`${errPrefix}vecCameraWorldDirBefore: ${vecCameraWorldDirAfterStr}`);
+                    }
+
+                    // Look at the leader.
+                    g_ThreeJsCamera.lookAt(leaderParticipantWrapperObj.threeJsAvatar.position);
+
+                    // Move towards the leader along the direction we are now looking in (at
+                    //  the leader).
+                    vecCameraWorldDir = g_ThreeJsCamera.getWorldDirection(vecCameraWorldDir);
+                    vecCameraWorldPos = g_ThreeJsCamera.getWorldPosition(vecCameraWorldPos);
+
+                    vecLeaderWorldPos = leaderParticipantWrapperObj.threeJsAvatar.getWorldPosition(vecLeaderWorldPos);
+
+                    if (bVerbose) {
+                        const vecCameraWorldDirAfterStr = vec3ToString(vecCameraWorldDir);
+                        console.info(`${errPrefix}vecCameraWorldDir(after)): ${vecCameraWorldDirAfterStr}`);
+                    }
+
+                    if (bLerp) {
+                        // Stop Lerping when we are at a comfortable distance from the leader.
+                        const trueDistance3D = trueDistanceFromObject3D(leaderParticipantWrapperObj.threeJsAvatar, vecCameraWorldPos);
+
+                        if (bVerbose)
+                            console.info(`${errPrefix}trueDistance3D between leader and follower: ${trueDistance3D}`);
+
+                        if (trueDistance3D > FOLLOWER_COMFORT_ZONE_DISTANCE) {
+                            // Not close enough to the leader.  Lerp to the leader.
+
+                            // DISABLED: Acts like a force field that keeps the FOLLOWER at the
+                            //  LEADER activation distance from the leader!
+                            // g_ThreeJsCamera.position.lerp(vecCameraWorldDir, FOLLOWER_LERP_ALPHA)
+                            g_ThreeJsCamera.position.lerp(vecLeaderWorldPos, FOLLOWER_LERP_ALPHA);
+                        }
+                    }
+                }
+            } else {
+                // We are a follower and we are currently not in FOLLOW mode.
+                //  Look for the closest television display that is playing
+                //  a video and look at it.
+                const closestTvPlayingVideo = g_TelevisionDisplayManager.findClosestTelevisionToLocalUser(true);
+
+                if (closestTvPlayingVideo) {
+                    // Look at the closest television display that is playing a video.
+                    vecObjWorldPos = closestTvPlayingVideo.threeJsAvatar.getWorldPosition(vecObjWorldPos);
+
+                    // TODO: Need to flip the Z axis, not sure why.
+                    vecToLookAtPos = new THREE.Vector3(
+                        vecObjWorldPos.x,
+                        vecObjWorldPos.y,
+                        -1 * vecObjWorldPos.z);
+                    g_ThreeJsCamera.lookAt(vecObjWorldPos);
+                }
+            }
+        }
+
+
+        // ----------------- FPS CONTROLS MOVEMENT CALCULATIONS -----------------
         if (g_ThreeJsControls.isLocked === true) {
-            g_ThreeJsRaycaster.ray.origin.copy(g_ThreeJsControls.getObject().position);
-            g_ThreeJsRaycaster.ray.origin.y -= 10;
+            // g_ThreeJsRaycaster.ray.origin.copy(g_ThreeJsControls.getObject().position);
+            // g_ThreeJsRaycaster.ray.origin.y -= 10;
 
-            const intersections = g_ThreeJsRaycaster.intersectObjects(g_ThreeJsObjects, false);
+            // Update the picking ray from the mouse and camera.
+            g_Raycaster.setFromCamera(g_Mouse, g_ThreeJsCamera);
 
-            const onObject = intersections.length > 0;
+            // ROS: This appears to be part of a check to allow jumping or
+            //  not.  See the raycast intersection code below involving onObject.
+            let userIsLookingAtObjects = g_Raycaster.intersectObjects(g_ThreeJsObjects, false);
+
+            /*
+            if (g_GlobalState.breakHerePlease && userIsLookingAtObjects.length > 0) {
+                console.info(`${errPrefix}Set a breakpoint here.`);
+
+                if (isOwnedByTelevisionDisplay(userIsLookingAtObjects[0].object)) {
+                    console.info(`${errPrefix}The first intersection object is owned by a television display.`);
+                }
+            }
+            */
+
+            const onObject = userIsLookingAtObjects.length > 0;
 
             const delta = (currentTime - prevTime) / 1000;
 
@@ -564,9 +937,16 @@ async function animateLoop() {
                 velocity.x -= direction.x * 400.0 * delta;
 
             if (onObject === true) {
-
+                // ROS: This appears to be part of a check to allow jumping or
+                //  not.  See the raycast intersection code above involving
+                //  onObject.
                 velocity.y = Math.max(0, velocity.y);
                 canJump = true;
+
+                if (g_BreakHerePlease)
+                    // This aids tracing using Chrome DevTools.  See pointerlock.js
+                    //  for the keystroke that sets g_BreakHerePlease to TRUE.
+                    console.info(`${errPrefix}Set DevTools breakpoint here.`);
             }
 
             g_ThreeJsControls.moveRight(-velocity.x * delta);
@@ -613,6 +993,11 @@ async function animateLoop() {
         // Update our spatial position in the Howler soundscape.
         setListenerPositionAndOrientation(g_ThreeJsCamera.position, g_ThreeJsCamera);
 
+        // TODO: Remove this debug code.
+        const howlListenerPosition = g_SoundPlayedByHowlerManager.getHowlListenerPosition3D();
+        const howlListenerOrientation = g_SoundPlayedByHowlerManager.getHowlListenerOrientation3D();
+
+
         // Tell all the participant wrapper objects to update themselves.
         // STUB.
 
@@ -622,7 +1007,7 @@ async function animateLoop() {
             //  window, then log them out of the conference automatically.  We don't check the
             //  time that has elapsed since they last spoke too because they may have left the
             //  room with their microphone on.
-            const secondsSinceLastSignificantMovement = localUserParticipantWrapperObj.secondsSinceLastSignificantMovement(currentAnimLoopTime);
+            const secondsSinceLastSignificantMovement = g_LocalUserParticipantWrapperObj.secondsSinceLastSignificantMovement(currentAnimLoopTime);
 
             if (bVerbose) {
                 // console.log(`${errPrefix} secondsSinceLastSignificantMovement: ${secondsSinceLastSignificantMovement}`);
@@ -647,7 +1032,7 @@ async function animateLoop() {
                 sendVoxeetCommand(new RemoteParticipantUpdate(g_ThreeJsCamera));
 
                 // Notify the participant wrapper object that the user is still moving..
-                localUserParticipantWrapperObj.notifyOfSignificantMovement();
+                g_LocalUserParticipantWrapperObj.notifyOfSignificantMovement();
 
                 /*
                 if (deltaLastSpatialAudioUpdateTime > SPATIAL_AUDIO_UPDATE_INTERVAL_MS) {
@@ -731,5 +1116,8 @@ async function animateLoop() {
         console.error(errMsg);
     }
 }
+
+// Add our mouse movement listener.
+window.addEventListener( 'mousemove', onMouseMoveForAnimateLoop, false );
 
 export {animateLoop, processRemoteParticipantUpdate};
