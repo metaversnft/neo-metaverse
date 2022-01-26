@@ -24,7 +24,7 @@ import {trueDistanceFromObject3D} from "./object-participant-support.js";
 
 // This is the distance in ThreeJS world units that an object must be from a picture display
 //  before we consider it within the picture display's activation range.
-const MAX_DISTANCE_FROM_PICTURE_DISPLAY_FOR_ACTIVATION = 1;
+const MAX_DISTANCE_FROM_PICTURE_DISPLAY_FOR_ACTIVATION = 6;
 
 const bVerbose = true;
 
@@ -742,10 +742,10 @@ function PictureDisplay(pictureDisplayId, cubeAssetsOrUrlObjs,  position, rotati
         //  to this picture display.  The camera *is" the local user
         //  as far as we concerned, at least when it comes to the
         //  camera's position and orientation.
-        if (false) {
+        if (false && self.idOfObject.indexOf('da-hongfei-ceo') > 0) {
             let distance =
                 // Math.abs(self.threeJsAvatar.position.distanceTo(g_ThreeJsCamera.position));
-                trueDistanceFromObject3D(self.threeJsAvatar.position, g_ThreeJsCamera.position);
+                trueDistanceFromObject3D(self.threeJsAvatar, g_ThreeJsCamera.position);
 
             console.info(`${errPrefix}Distance from local user to picture display(${self.idOfObject}) is: ${distance}`);
         }

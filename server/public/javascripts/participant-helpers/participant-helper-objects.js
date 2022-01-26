@@ -724,12 +724,6 @@ function ParticipantWrapper(participant, stream) {
             // Update the DolbyIO spatial audio environment.
             VoxeetSDK.conference.setSpatialPosition(self.participantObj.id, spatialPosition);
         }
-
-        // TODO: Add code to show when users that do not have their
-        //  camera turned are talking, by starting the video used
-        //  as the avatar's video "face", and stopping it when they
-        //  stop talking.  Use the DolbyIO is-speaking detection
-        //  feature to do this.
     }
 
     /**

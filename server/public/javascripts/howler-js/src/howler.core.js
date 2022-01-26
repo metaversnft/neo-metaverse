@@ -15,6 +15,10 @@
   /** Global Methods **/
   /***************************************************************************/
 
+
+  // ROS: This is a placebo Howler, used for to make testing an environment withou
+  //  Howler, easier.
+
   /**
    * Create the global controller. All contained methods and properties apply
    * to all sounds that are currently playing or will be in the future.
@@ -29,6 +33,11 @@
      */
     init: function() {
       var self = this || Howler;
+
+      // ROS: Do nothing, so as not to affect the the global HTML5
+      //  AudioContext.
+      // console.warn(`(HowlerGlobal::init) HOWLER IS DISABLED.`)
+      // return self;
 
       // Create a global ID counter.
       self._counter = 1000;
@@ -48,7 +57,13 @@
       // Public properties.
       self.masterGain = null;
       self.noAudio = false;
-      self.usingWebAudio = true;
+
+      // ROS: Do nothing, so as not to affect the the global HTML5
+      //  AudioContext.
+      console.warn(`(HowlerGlobal::init) HOWLER IS DISABLED, therefore we are not setting up the HTML5 AudioContext.`)
+      // self.usingWebAudio = true;
+      self.usingWebAudio = false;
+
       self.autoSuspend = true;
       self.ctx = null;
 
@@ -643,7 +658,11 @@
 
       // Load the source file unless otherwise specified.
       if (self._preload && self._preload !== 'none') {
-        self.load();
+        // ROS: Do nothing, so as not to affect the the global HTML5
+        //  AudioContext.
+        console.warn(`(Howl::init) HOWLER IS DISABLED, therefore we are not setting up the HTML5 AudioContext.`)
+
+        // self.load();
       }
 
       return self;
@@ -2511,6 +2530,11 @@
    * Setup the audio context when available, or switch to HTML5 Audio mode.
    */
   var setupAudioContext = function() {
+    // ROS: Do nothing, so as not to affect the the global HTML5
+    //  AudioContext.
+    console.warn(`(setupAudioContext) HOWLER IS DISABLED, therefore we are not setting up the HTML5 AudioContext.`)
+    return;
+
     // If we have already detected that Web Audio isn't supported, don't run this step again.
     if (!Howler.usingWebAudio) {
       return;

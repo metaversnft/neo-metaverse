@@ -24,7 +24,7 @@ const g_AudioOutputDevicesList = document.querySelector('#audio-output-devices-s
 const g_VideoInputDevicesList = document.querySelector('#video-input-devices-select');
 
 // Turn Spatial Audio ON/OFF.
-const g_IsSpatialAudioEnabbled = false;
+const g_IsSpatialAudioEnabbled = true;
 
 const bVerbose = true;
 
@@ -100,6 +100,9 @@ function sendDelayedUnsolicitedStatusUpdate() {
 /**
  * Sets the local user's spatial audio position to that given.
  *
+ * NOTE: This function must be called at least once to
+ *  fully enable DolbyIO spatial audio processing!
+ *
  * @param {THREE.Vector3} spatialPosition - The 3D position to set the
  *  local user's spatial audio position to.
  */
@@ -113,8 +116,8 @@ function setLocalUserSpatialAudioPosition(spatialPosition) {
     if (!(spatialPosition instanceof THREE.Vector3))
         throw new Error(errPrefix + `The value in the position3D parameter is not a THREE.Vector3 object.`);
 
-    if (bVerbose)
-        console.info(`${errPrefix} ${spatialPosition.x}, ${spatialPosition.y}, ${spatialPosition.z}`);
+    if (true && bVerbose)
+        console.info(`Local user spatial position set to: ${errPrefix} ${spatialPosition.x}, ${spatialPosition.y}, ${spatialPosition.z}`);
 
     VoxeetSDK.conference.setSpatialPosition(VoxeetSDK.session.participant, spatialPosition);
 }
@@ -502,14 +505,15 @@ async function joinConference(conferenceName) {
   // ROS: Create options with spatial audio.
   const createOptions =
       {
-        alias: conferenceName,
+        // alias: conferenceName,
+        alias: 'spatial',
         params: {
           dolbyVoice: true,
           // From getting started sample.  Added these on 12/27/2021.
-          liveRecording: false,
-          rtcpMode: "average", // worst, average, max
-          ttl: 0,
-          videoCodec: "H264", // H264, VP8
+            // liveRecording: false,
+            // rtcpMode: "average", // worst, average, max
+            // ttl: 0,
+            // videoCodec: "H264", // H264, VP8
         }
       };
 
@@ -534,16 +538,33 @@ async function joinConference(conferenceName) {
   //  we consider to be the limit of the listener's hearing.
   // const scale = {x: THREEJS_WORLD_AUDIO_DISTANCE_THRESHOLD, y: THREEJS_WORLD_AUDIO_DISTANCE_THRESHOLD, z: THREEJS_WORLD_AUDIO_DISTANCE_THRESHOLD};
 
-  const scale = {s: 10, y: 10, z: 1};
+  // According to the DolbyIO docs:
+  //
+  // "A participant who is one meter away will be at full volume. A participant who is 100 meters away will not be heard."
+  //
+  // Set the scale so that we are using a 1000 pixel square virtual screen.
+  //  Given the note from the DolbyIO docs, we divide that value by 100 to
+  //   to get the scale for all axes.
+  // const calcScale = 1000 / 100
+  if (g_Spatial_2D_Screen.height !== g_Spatial_2D_Screen.width)
+      // At this time we are assuming that the virtual 2D soundscape
+      //  is square and some of our derivative calculations depend
+      //  on that assumption.
+      throw new Error(errPrefix + `The spatial audio 2D soundscape is no longer square.  Please reexamine any dependent calculations.`);
 
-  // All axes treat larger numbers as being further from the
-  //  listener except for the X value, which maps to left and
-  //  right.
-  // const forward = {x: 0, y: -1, z: 0};
+  // Determine the ratio between the ThreeJS world units to our spatial audio 2D soundscape
+  // and use that as the scale value for our DolbyIO spatial audio environment.
+  const calcScale = g_Spatial_2D_Screen.width / g_Spatial_2D_Screen.worldUnitsPerSoundUnit;
+  // Uniform scale for all spatial audio coordinates.
+  const scale = {s: calcScale, y: calcScale, z: calcScale};
+
+  // Values of Y closer to 0 are considered closer to the listener.
   const forward = {x: 0, y: -1, z: 0};
-  // const up = {x: 0, y: 0, z: 1};
+  // The orientation of the listeners head in the direction of the
+  // positive Z axis.
   const up = {x: 0, y: 0, z: 1};
-  // const right = {x: 1, y: 0, z: 0};
+  // Smaller X values indicate a more leftward position, greater X
+  // values are more rightwards.
   const right = {x: 1, y: 0, z: 0};
 
   let conferenceObj = null;
@@ -559,7 +580,7 @@ async function joinConference(conferenceName) {
       )
       // RESULT OF CONFERENCE JOIN ATTEMPT.
       .then((joinedRetObj) => {
-        console.log(joinedRetObj);
+        console.info(`${errPrefix} Join result object: ${joinedRetObj}.`);
 
         // Reset the bIsLocalUserMuted flag and sync the microphone buttons.
         bIsLocalUserMuted = false;
@@ -628,6 +649,19 @@ async function joinConference(conferenceName) {
               console.warn(`${errPrefix}startAudioWithoutFailing_promise() Spatial audio configuration calls are ENABLED.`);
               // ROS: Set the parameters for the spatial audio environment.
               VoxeetSDK.conference.setSpatialEnvironment(scale, forward, up, right);
+
+              // Initialize the local user position in the DolbyIO
+              //  sound field or spatial audio will not work properly.
+              //
+              // Place them in the center of our virtual 2D screen along
+              //  the X and Y axis.
+              let localUserPos = new THREE.Vector3();
+
+              localUserPos.x = g_Spatial_2D_Screen.width / 2;
+              localUserPos.y = g_Spatial_2D_Screen.height / 2;
+              localUserPos.z = 1;
+
+              setLocalUserSpatialAudioPosition(localUserPos);
           } else {
               console.warn(`${errPrefix}startAudioWithoutFailing_promise() Spatial audio configuration calls are DISABLED.`);
           }
@@ -1018,7 +1052,6 @@ function callMeWhenPageIsReady() {
     g_ThreeJsControls.addEventListener( 'lock', function () {
         // We received the message from the controls object that tells us the
         //  controls have been locked.  This means the player wants to play.
-
         doPostLockProcessing();
     } );
 
@@ -1033,4 +1066,29 @@ function callMeWhenPageIsReady() {
     waitingRoomReadyDivSelector.show();
 }
 
-export {g_IsSpatialAudioEnabbled, g_AudioInputDevicesList, g_AudioOutputDevicesList, g_VideoInputDevicesList, callMeWhenPageIsReady, doPostUnlockProcessing, enumerateAllDevices_promise, initUI, getSelectedAudioInputDevice, getSelectedAudioOutputDevice, getSelectedVideoInputDevice, muteOrUnmuteMicrophone, startStopVideo, setLocalUserSpatialAudioPosition, SPATIAL_AUDIO_FIELD_WIDTH, SPATIAL_AUDIO_FIELD_HEIGHT};
+// ----------------- VIRTUAL 2D SCREEN FOR USE WITH DOLBYIO SPATIAL AUDIO ----------------
+
+// The dimensions for the virtual 2D screen we use with DolbyIO's spatial audio.
+const g_Spatial_2D_Screen = {
+    x: {
+        min: 0,
+        max: 1000
+    },
+    y: {
+        min: 0,
+        max: 1000
+    }
+}
+
+// Calculate the width and height of the virtual 2D screen based on our X and Y min/max values.
+g_Spatial_2D_Screen.width = Math.abs(g_Spatial_2D_Screen.x.max - g_Spatial_2D_Screen.x.min);
+g_Spatial_2D_Screen.height = Math.abs(g_Spatial_2D_Screen.y.max - g_Spatial_2D_Screen.y.min);
+// We consider the following value in ThreeJS world units to be equal to one meter in the DolbyIO
+//  virtual 2D soundscape.  This will be used by other code to calculate the "scale" value
+//  when configuring the DolbyIO spatial environment.
+g_Spatial_2D_Screen.worldUnitsPerSoundUnit = 100;
+// One half the width and height, so it does not have to continually recalculated.
+g_Spatial_2D_Screen.halfWidth = g_Spatial_2D_Screen.width / 2;
+g_Spatial_2D_Screen.halfHeight = g_Spatial_2D_Screen.height / 2;
+
+export {g_Spatial_2D_Screen, g_IsSpatialAudioEnabbled, g_AudioInputDevicesList, g_AudioOutputDevicesList, g_VideoInputDevicesList, callMeWhenPageIsReady, doPostUnlockProcessing, enumerateAllDevices_promise, initUI, getSelectedAudioInputDevice, getSelectedAudioOutputDevice, getSelectedVideoInputDevice, muteOrUnmuteMicrophone, startStopVideo, setLocalUserSpatialAudioPosition, SPATIAL_AUDIO_FIELD_WIDTH, SPATIAL_AUDIO_FIELD_HEIGHT};

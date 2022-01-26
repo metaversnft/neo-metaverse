@@ -3,13 +3,13 @@
 
 import {
     g_ParticipantWrapperManager,
-    getLocalUserParticipantId
+    getLocalUserParticipantId, isLocalUserParticipantId
 } from "../../participant-helpers/participant-helper-objects.js";
 import {g_TelevisionDisplayManager, TelevisionDisplay} from "../../objects/television.js";
 import {g_PictureDisplayManager} from "../../objects/picture-display.js";
 
 import * as POINTERLOCK from "./pointerlock.js";
-import {makeBoxInScene_original, testGltf} from "./pointerlock.js";
+import {g_AryHdriImageFilenames, loadOneHdriImage, makeBoxInScene_original, testGltf} from "./pointerlock.js";
 import {
     g_AnimationMixers,
     g_ClipActions,
@@ -42,6 +42,7 @@ import {
 import {
     doPostUnlockProcessing,
     g_IsSpatialAudioEnabbled,
+    g_Spatial_2D_Screen,
     muteOrUnmuteMicrophone,
     setLocalUserSpatialAudioPosition,
     startStopVideo
@@ -70,6 +71,25 @@ import {flashBuyButton} from "../../page-support/neoland-page-support.js";
 import {g_NeoLineHelper} from "../../neo/neoline-helpers.js";
 
 const errPrefix = '(animate-loop) ';
+
+// This flag tells the animate loop if we are auto-moving the
+//  local user (i.e. - the camera) or not.
+let g_AutoMoveLocalUser = false;
+
+// We reuse these THREE.Vector3 variables to keep resource allocations down.
+let g_ReuseVecSpatialAudioPos = new THREE.Vector3();
+let g_ReuseVecSpatialAudioPosTranslated = new THREE.Vector3();
+
+// This object as an associative array helps us track meaningful
+//  changes to a participant's spatial audio position.  The key
+//  is the ID of a particular conference participant and the
+//  value is the a THREE.Vector3() object containing the
+//  spatial audio position used in the previous animation
+//  loop iteration.
+let g_PreviousSpatialAudioPosition = {};
+
+// For cycling through the available HDRI images.
+let g_CurrentHdriImageNdx = null;
 
 // TODO: Create a better away to set the NFT auction ID on Ghostmarket
 //  than the current technique of passing it as a GET argument.
@@ -187,6 +207,59 @@ function FollowerModeUpdate(statusOnOff) {
 }
 
 /**
+ * Dump a summary of all the participants in the conference to the console.
+ */
+function dumpParticipantSummary() {
+    const errPrefix = `(dumpParticipantSummary) `;
+
+    [...VoxeetSDK.conference.participants].map((val) => {
+        const voxeetParticipant = val[1];
+
+        // Do we have an is-speaking status for this participant?
+        let speakingStatus = '(unknown)';
+
+        if (g_AryParticipantsSpeakingStatuses[voxeetParticipant.id] !== null &&
+            typeof g_AryParticipantsSpeakingStatuses[voxeetParticipant.id] !== 'undefined') {
+            speakingStatus = g_AryParticipantsSpeakingStatuses[voxeetParticipant.id] ? 'SPEAKING' : 'SILENT';
+        }
+
+        // Is this the local user?
+        const isLocalUser = isLocalUserParticipantId(voxeetParticipant.id);
+
+        const statusStr = `${errPrefix} [${voxeetParticipant.id}] -> Local user: ${isLocalUser}, status: ${voxeetParticipant.status}, speaking status: ${speakingStatus}.`;
+       console.info(statusStr);
+    });
+}
+
+/**
+ * A Simple function to detect any significant change in 
+ *  any axis between two 3D vectors.
+ *  
+ * @param {THREE.Vector3} vec_1 - A 3D vector.
+ * @param {THREE.Vector3} vec_2 - A 3D vector.
+ * 
+ * @returns {Boolean} - Returns TRUE if there is a 
+ *   significant difference between the two vectors,
+ *   FALSE if not.
+ */
+function isMeaningfulSpatialAudioPosChange(vec_1, vec_2) {
+    const errPrefix = `(isMeaningfulSpatialAudioPosChange) `;
+
+    if (!(vec_1 instanceof THREE.Vector3))
+        throw new Error(errPrefix + `The value in the vec_1 parameter is not a THREE.Vector3 object.`);
+    if (!(vec_2 instanceof THREE.Vector3))
+        throw new Error(errPrefix + `The value in the vec_2 parameter is not a THREE.Vector3 object.`);
+    
+    if (vec_1.x !== vec_2.x)
+        return true;
+    if (vec_1.y !== vec_2.y)
+        return true;
+    if (vec_1.z !== vec_2.z)
+        return true;
+    return false;
+}
+
+/**
  * This function is called when the mouse moves.  It keeps
  *  track of the current mouse coordinates to facilitate
  *  ray tracing operations.
@@ -293,6 +366,29 @@ const onKeyDown = async function ( event ) {
                 console.info(`${errPrefix}Following mode STOPPED.`);
             }
             break;
+        case 'KeyH':
+            // Cycle the HDR images.
+            // const rndHdrImageFilename = misc_shared_lib.getRandomArrayElement(g_AryHdriImageFilenames);
+
+            if (g_CurrentHdriImageNdx === null)
+                // First time.  Move to next image.
+                g_CurrentHdriImageNdx = 1;
+            else
+                g_CurrentHdriImageNdx++;
+
+            if (g_CurrentHdriImageNdx >= g_AryHdriImageFilenames.length)
+                // Out of array elements.  Start at the beginning.
+                g_CurrentHdriImageNdx = 0;
+
+            const rndHdrImageFilename = g_AryHdriImageFilenames[g_CurrentHdriImageNdx];
+
+            loadOneHdriImage(rndHdrImageFilename, true);
+            break;
+        case 'KeyM':
+            // Toggle the auto-move flag for the local user.
+            g_AutoMoveLocalUser = !g_AutoMoveLocalUser;
+            break;
+
         case 'KeyI':
             // Dump all the objects the camera is looking at.
             // Set the direction of the picking ray from the position and orientation of the
@@ -336,13 +432,17 @@ const onKeyDown = async function ( event ) {
         case 'KeyM':
             muteOrUnmuteMicrophone();
             break
+        case 'KeyP':
+            // Dump a summary of the participants list to the console.
+            dumpParticipantSummary();
+            break;
         // ROS: Reset the camera to the default position.
         case 'KeyR':
             g_ThreeJsCamera.position.set( 0, 0, 0 );
             g_ThreeJsCamera.rotation.set( 0, 0, 0 );
             resetKeys();
             break;
-        // ROS: Teleport to the desired location..
+        // ROS: Teleport to the desired location.
         case 'KeyT':
             /* NEO SMART ECONOMY BOOTH
             g_ThreeJsCamera.position.set( 5, 10, -508 );
@@ -379,6 +479,7 @@ const onKeyDown = async function ( event ) {
 
             // testGltf();
 
+            /*
             // Test getting the details for a specific NFT auction.
             const auctionDetailsObj = await g_GhostMarketApiHelper.getAuctionDetails_promise('somniumwave', 136, true)
             .catch(err => {
@@ -391,6 +492,11 @@ const onKeyDown = async function ( event ) {
 
             console.info(errPrefix + `auctionDetailsObj object:`);
             console.dir(auctionDetailsObj, {depth: null, colors: true});
+             */
+
+            // Sound test booth.
+            g_ThreeJsCamera.position.set( 410.9089492740889, 10, -492.257003861322 );
+            g_ThreeJsCamera.rotation.set( 3.1205737619708613, 0.04239799032654932, -3.140701630807667 );
 
             break;
         // ROS: Turn the camera ON and OFF.
@@ -725,8 +831,9 @@ setInterval(() => {
 
                     // Just started speaking?
                     if (!previousIsSpeakingStatus) {
-                        // Yes.  Log the occurrence.
-                        console.info(`${isSpeakingIntervalErrorPrefix}Participant ${participantRef} STARTED speaking.`);
+                        // Yes.  Log the occurrence if we are in verbose mode.
+                        if (bVerbose)
+                            console.info(`${isSpeakingIntervalErrorPrefix}Participant ${participantRef} STARTED speaking.`);
 
                         // Notify the participant's wrapper object that they just started speaking.
                         if (participantWrapperObj)
@@ -735,8 +842,9 @@ setInterval(() => {
                 } else {
                     // Just stopped speaking?
                     if (previousIsSpeakingStatus) {
-                        // Yes.  Log the occurrence.
-                        console.info(`${isSpeakingIntervalErrorPrefix}Participant ${participantRef} STOPPED speaking.`);
+                        if (bVerbose)
+                            // Yes.  Log the occurrence if we are in verbose mode.
+                            console.info(`${isSpeakingIntervalErrorPrefix}Participant ${participantRef} STOPPED speaking.`);
 
                         // Notify the participant's wrapper object that they just started speaking.
                         if (participantWrapperObj)
@@ -781,8 +889,19 @@ async function animateLoop() {
 
         const currentAnimLoopTime = new Date();
 
+        // Are we auto-moving the local user?
+        if (g_AutoMoveLocalUser) {
+            // Maintain auto-move mode.
+            g_ThreeJsCamera.position.x += 0.01;
+        }
+
         // Keep the local user participant ID variable updated.
         const currentId = getLocalUserParticipantId();
+
+        // Several of the calculations we do rely on having the camera world
+        //  direction and position, get those now.
+        vecCameraWorldDir = g_ThreeJsCamera.getWorldDirection(vecCameraWorldDir);
+        vecCameraWorldPos = g_ThreeJsCamera.getWorldPosition(vecCameraWorldPos);
 
         // Keep the local user participant object variable updated.
         assignLocalUserParticipantWrapperObj(g_ParticipantWrapperManager.getLocalUserParticipantWrapper());
@@ -846,11 +965,8 @@ async function animateLoop() {
                     // Look at the leader.
                     g_ThreeJsCamera.lookAt(leaderParticipantWrapperObj.threeJsAvatar.position);
 
-                    // Move towards the leader along the direction we are now looking in (at
-                    //  the leader).
-                    vecCameraWorldDir = g_ThreeJsCamera.getWorldDirection(vecCameraWorldDir);
-                    vecCameraWorldPos = g_ThreeJsCamera.getWorldPosition(vecCameraWorldPos);
-
+                    // Move towards the leader along the direction the local user (camera) ise now looking in, at
+                    //  the leader.
                     vecLeaderWorldPos = leaderParticipantWrapperObj.threeJsAvatar.getWorldPosition(vecLeaderWorldPos);
 
                     if (bVerbose) {
@@ -860,12 +976,12 @@ async function animateLoop() {
 
                     if (bLerp) {
                         // Stop Lerping when we are at a comfortable distance from the leader.
-                        const trueDistance3D = trueDistanceFromObject3D(leaderParticipantWrapperObj.threeJsAvatar, vecCameraWorldPos);
+                        const trueDistanceForLerp3D = trueDistanceFromObject3D(leaderParticipantWrapperObj.threeJsAvatar, vecCameraWorldPos);
 
                         if (bVerbose)
-                            console.info(`${errPrefix}trueDistance3D between leader and follower: ${trueDistance3D}`);
+                            console.info(`${errPrefix}trueDistance3D between leader and follower: ${trueDistanceForLerp3D}`);
 
-                        if (trueDistance3D > FOLLOWER_COMFORT_ZONE_DISTANCE) {
+                        if (trueDistanceForLerp3D > FOLLOWER_COMFORT_ZONE_DISTANCE) {
                             // Not close enough to the leader.  Lerp to the leader.
 
                             // DISABLED: Acts like a force field that keeps the FOLLOWER at the
@@ -1073,6 +1189,7 @@ async function animateLoop() {
 
                 // Yes. Tell the DolbyIO spatial audio API to update the soundscape with
                 //  the listener's new position.
+                // DEPRECATED: The local user should be in the list of participants.
                 // setLocalUserSpatialAudioPosition(spatialPosition);
 
                 // Now update all the remote participants that are still connected.
@@ -1082,26 +1199,117 @@ async function animateLoop() {
                     // Only process connected participants.
                     if (voxeetParticipant.status === ParticipantStatuses.CONNECTED) {
                         // Find the participant wrapper object for this participant.
-                        const participantWrapperObj = g_ParticipantWrapperManager.findParticipantWrapperById(voxeetParticipant.id);
+                        const remoteParticipantWrapperObj = g_ParticipantWrapperManager.findParticipantWrapperById(voxeetParticipant.id);
 
-                        if (participantWrapperObj) {
+                        // There is no point in processing the local user because their
+                        //  avatar position is set to the camera so all delta calculations
+                        //  will always be 0.
+                        if (remoteParticipantWrapperObj && remoteParticipantWrapperObj !== g_LocalUserParticipantWrapperObj) {
 
-                            // Set the participant position to the middle of their ThreeJS avatar, but
+                            // TODO: Set the participant position to the middle of their ThreeJS avatar, but
                             //  make the coordinates relative to the local user's position (the camera).
-                            const relX = participantWrapperObj.threeJsAvatar.position.x - g_ThreeJsCamera.position.x;
-                            const relY = participantWrapperObj.threeJsAvatar.position.y - g_ThreeJsCamera.position.y;
-                            const relZ = participantWrapperObj.threeJsAvatar.position.z - g_ThreeJsCamera.position.z;
 
-                            VoxeetSDK.conference.setSpatialPosition(voxeetParticipant, {
-                                x: relX,
-                                y: relZ,
-                                z: 0
-                            });
+                            // Calculate the change in the participant's relative position (not absolute)
+                            //  since the last iteration.  We use relative positioning because a remote
+                            //  participant may not have moved, but the local user might have thereby
+                            //  changing the aural relationship between the local user (listener)
+                            //  and the remote participant.
+                            g_ReuseVecSpatialAudioPos.x = remoteParticipantWrapperObj.threeJsAvatar.position.x - g_ThreeJsCamera.position.x;
+                            g_ReuseVecSpatialAudioPos.y = remoteParticipantWrapperObj.threeJsAvatar.position.y - g_ThreeJsCamera.position.y;
+                            g_ReuseVecSpatialAudioPos.z = remoteParticipantWrapperObj.threeJsAvatar.position.z - g_ThreeJsCamera.position.z;
+
+                            // Test set everything to the lowest Y value in our virtual
+                            //  2D screen so that we can hear something.  Right now we
+                            //  don't hear anything at all with spatial audio enabled.
+                            //  Set the X value to the middle of the screen too.
+                            if (false) {
+                                g_ReuseVecSpatialAudioPos.x = (g_Spatial_2D_Screen.x.min + g_Spatial_2D_Screen.x.max) / 2;
+                                g_ReuseVecSpatialAudioPos.y = 0;
+                                g_ReuseVecSpatialAudioPos.z = 0;
+                            }
 
                             if (bVerbose)
-                                console.info(`[${voxeetParticipant.id}] Spatial position updated to ${relX}, ${relY}, ${relZ}`);
+                                console.info(`[${voxeetParticipant.id}] Spatial position updated to ${g_ReuseVecSpatialAudioPos.x}, ${g_ReuseVecSpatialAudioPos.y}, ${g_ReuseVecSpatialAudioPos.z}`);
+                            else {
+                                // Only post a diagnostic message if at least one of the user's
+                                //  spatial positions has changed since the last iteration of
+                                //  the animation loop.
+                                //
+                                // Do we have a previous value yet?
+                                if (g_PreviousSpatialAudioPosition[voxeetParticipant.id]) {
+                                    // Yes.  Did it change significantly this pass?
+                                    if (isMeaningfulSpatialAudioPosChange(g_PreviousSpatialAudioPosition[voxeetParticipant.id], g_ReuseVecSpatialAudioPos)) {
+                                        // Translate our raw XYZ coordinates into the DolbyIO virtual 2D
+                                        //  screen we use to interpolate the ThreeJS values into the
+                                        //  DolbyIO soundscape coordinates.
+                                        //
+                                        // AXIOMS:
+                                        //  - All values should always be positive.
+                                        //  - Given our current spatial environment definition:
+                                        //
+                                        //      + Decreasing X values place the sound source more
+                                        //      to the left, increasing value to the right.
+
+                                        //      + lower Y values are considered to be closer to
+                                        //      the front of the soundscape (i.e. - close to the
+                                        //      listener and therefore louder).
+                                        //
+                                        //      + Z is ignored.
+                                        //
+                                        // Negative X should be left of us, limit 0.
+
+                                        // Calculate the virtual X value in the soundscape.
+                                        g_ReuseVecSpatialAudioPosTranslated.x =
+                                            // Half the virtual 2D screen width is the center of the
+                                            //  the sound field.  Shift the delta X value of the
+                                            //  remote participant to the listener by that much
+                                            //  to rescale it to the desired range, with a minimum
+                                            //  value of zero.
+                                            Math.max(0, g_ReuseVecSpatialAudioPos.x + g_Spatial_2D_Screen.halfWidth);
+
+                                        // Since higher values of Y are considered further from the listener, we
+                                        //  rescale the true distance between the listener and the remote
+                                        //  participant to the virtual 2D screen height.
+                                        const trueDistance3DBetweenAvatars =
+                                            trueDistanceFromObject3D(remoteParticipantWrapperObj.threeJsAvatar, vecCameraWorldPos);
+
+                                        // Limit the distance value by the virtual 2D screen height if necessary.
+                                        g_ReuseVecSpatialAudioPosTranslated.y =
+                                            Math.min(g_Spatial_2D_Screen.y.max, trueDistance3DBetweenAvatars);
+
+                                        // Ignore Z, always 0.
+                                        g_ReuseVecSpatialAudioPosTranslated.z = 0;
+
+                                        // Update the DolbyIO Spatial API with the new relative position.
+                                        VoxeetSDK.conference.setSpatialPosition(voxeetParticipant, {
+                                            x: g_ReuseVecSpatialAudioPosTranslated.x,
+                                            y: g_ReuseVecSpatialAudioPosTranslated.y,
+                                            z: g_ReuseVecSpatialAudioPosTranslated.z
+                                        });
+
+
+                                        // Yes.  Post a log message with the updated spatial audio position.
+                                        console.info(`[${voxeetParticipant.id}] Relative ThreeJS position: ${g_ReuseVecSpatialAudioPos.x}, ${g_ReuseVecSpatialAudioPos.y}, ${g_ReuseVecSpatialAudioPos.z}`);
+                                        // Yes.  Post a log message with the updated spatial audio position.
+                                        console.info(`[continued] Spatial position updated to  translated values: ${g_ReuseVecSpatialAudioPosTranslated.x}, ${g_ReuseVecSpatialAudioPosTranslated.y}, ${g_ReuseVecSpatialAudioPosTranslated.z}`);
+                                    }
+                                }
+                            }
+
+                            // Save the current spatial audio position for evaluation during
+                            //  the next animation loop iteration.
+                            //
+                            // Only create a THREE.Vector3 object once, to avoid unnecessary
+                            //  memory consumption.
+                            if (!g_PreviousSpatialAudioPosition[voxeetParticipant.id])
+                                g_PreviousSpatialAudioPosition[voxeetParticipant.id] = new THREE.Vector3();
+
+                            g_PreviousSpatialAudioPosition[voxeetParticipant.id].x = g_ReuseVecSpatialAudioPos.x;
+                            g_PreviousSpatialAudioPosition[voxeetParticipant.id].y = g_ReuseVecSpatialAudioPos.y;
+                            g_PreviousSpatialAudioPosition[voxeetParticipant.id].z = g_ReuseVecSpatialAudioPos.z;
                         } else {
-                            console.warn(`${errPrefix}Could not find a participant wrapper object for participant ID: ${voxeetParticipant.id}.`);
+                            if (bVerbose)
+                                console.warn(`${errPrefix}Could not find a participant wrapper object for participant ID: ${voxeetParticipant.id}.`);
                         }
                     }
                 });
@@ -1120,4 +1328,4 @@ async function animateLoop() {
 // Add our mouse movement listener.
 window.addEventListener( 'mousemove', onMouseMoveForAnimateLoop, false );
 
-export {animateLoop, processRemoteParticipantUpdate};
+export {animateLoop, g_AryParticipantsSpeakingStatuses,  processRemoteParticipantUpdate};

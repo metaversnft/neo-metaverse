@@ -600,6 +600,44 @@ function setSelectedIndexByValue(selectBox, valueToSelect) {
 	return false;
 }
 
+/**
+ * Return a random integer value between 0 and maxIntegerValue.
+ *
+ * @param {Number} maxIntegerValue - The maximum integer value.
+ *
+ * @return {number}
+ */
+function getRandomInteger(maxIntegerValue) {
+
+	// We use the floor() function because the random()
+	//  function returns a floating point number between
+	//  0 and 1, but 1 is NOT included.
+	return Math.floor(Math.random() * maxIntegerValue);
+}
+
+/**
+ * Return one of the elements of an array, chosen at random.
+ *
+ * @param {Array<any>>} ary - An array.
+ *
+ * @return {*}
+ */
+function getRandomArrayElement(ary) {
+	const errPrefix = `(getRandomArrayElement) `;
+
+	if (!Array.isArray(ary))
+		throw new Error(errPrefix + `The ary parameter value is not an array.`);
+	if (ary.length < 1)
+		throw new Error(errPrefix + `The array is empty.`);
+
+	if (ary.length === 1)
+		return ary[0];
+
+	const rndNdx = getRandomInteger(ary.length);
+
+	return ary[rndNdx];
+}
+
 // Use this code on both client and server side.  Are we on the server side?
 if (typeof module == 'undefined' || typeof module.exports == 'undefined')
 {
@@ -633,6 +671,8 @@ if (typeof module == 'undefined' || typeof module.exports == 'undefined')
 	window.misc_shared_lib.conformErrorObjectMsg = conformErrorObjectMsg;
 	window.misc_shared_lib.delayMS_promise = delayMS_promise;
 	window.misc_shared_lib.extractPropertyFromObj = extractPropertyFromObj;
+	window.misc_shared_lib.getRandomArrayElement = getRandomArrayElement;
+	window.misc_shared_lib.getRandomInteger = getRandomInteger;
 	window.misc_shared_lib.getRandomString = getRandomString;
 	window.misc_shared_lib.getSimplifiedUuid =getSimplifiedUuid;
 	window.misc_shared_lib.isEmptyOrWhitespaceString = isEmptyOrWhitespaceString;
@@ -664,7 +704,8 @@ else
 			conformErrorObjectMsg: conformErrorObjectMsg,
 			delayMS_promise: delayMS_promise,
 			extractPropertyFromObj: extractPropertyFromObj,
-			getRandomString: getRandomString,
+			getRandomArrayElement: getRandomArrayElement,
+			getRandomInteger: getRandomInteger,
 			getRandomString: getRandomString,
 			getSimplifiedUuid: getSimplifiedUuid,
 			isEmptyOrWhitespaceString: isEmptyOrWhitespaceString,

@@ -173,9 +173,9 @@ VoxeetSDK.command.on('received', (participant, message) => {
 const mainVoxeetSDK = async () => {
   const errPrefix = `(mainVoxeetSDK) `;
 
-  // NOTE: You should switch over to token based user SDK
-  //  access ASAP, for security reasons!
-  VoxeetSDK.initialize('<YOUR DOLBY IO PUBLIC KEY>', 'YOUR DOLBYIO SECRET');
+  // TODO: Put your DolbyIO credentials here!
+  VoxeetSDK.initialize('<YOUR DOLBYIO CONSUMER KEY>', 'YOUR DOLBYIO SECRET>');
+
   try {
     await VoxeetSDK.session.open({ name: randomName });
     await initUI();

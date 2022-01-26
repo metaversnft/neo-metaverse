@@ -59,6 +59,25 @@ const S3_BASE_URL = 'https://d2gu5htr6mst1o.cloudfront.net/booths-1/public/booth
 
 let theGroundMirror;
 
+// Other needed objects to build the scene.
+let g_PmremGenerator = null;
+
+// These are the available HDRI images.  The first one
+//  will be the initial one.
+const g_AryHdriImageFilenames = [
+    "shanghai_bund_1k.hdr",
+    "blue_lagoon_night_1k.hdr",
+    "christmas_photo_studio_04_1k.hdr",
+    "courtyard_night_1k.hdr",
+    "hansaplatz_1k.hdr",
+    "moonless_golf_1k.hdr",
+    "pond_bridge_night_1k.hdr",
+    "preller_drive_1k.hdr",
+    "royal_esplanade_4k.hdr",
+    "solitude_night_1k.hdr",
+    "studio_small_03_1k.hdr"
+]
+
 /**
  * Dump the position and orientation given to the console.
  *
@@ -910,7 +929,8 @@ function jsonWorldContentToScene() {
 }
 
 /**
- * Prepare teh scene for HDRI usage.
+ * Prepare the scene for HDRI usage.  Load all the HDRI
+ *  images we use.  Only the image name that is specified in the
  */
 function prepareHdri() {
     const params = {
@@ -968,6 +988,67 @@ function initializeThreeJS() {
 
 }
 
+/**
+ * Load an HDRI image.
+ *
+ * @param {String} hdriImageFilenameOnly - The primary file name of the HDRI image
+ *  to load.
+ *
+ * @param bVisible
+ */
+function loadOneHdriImage(hdriImageFilenameOnly, bVisible=false) {
+    const errPrefix = `(hdriImageFilenameOnly) `;
+
+    if (misc_shared_lib.isEmptySafeString(hdriImageFilenameOnly))
+        throw new Error(errPrefix + `The hdriImageFilenameOnly parameter is empty.`);
+    if (typeof bVisible !== 'boolean')
+    	throw new Error(errPrefix + `The value in the bVisible parameter is not boolean.`);
+
+
+    const fullUrlToHdri = `${S3_BASE_URL}/somnium-wave/hdri/${hdriImageFilenameOnly}`;
+
+    console.warn(`${errPrefix}Loading HDR file from S3 using the URL: ${fullUrlToHdri}.`);
+
+    /*
+    new RGBELoader()
+        .load( fullUrlToHdri, function ( texture ) {
+            texture.mapping = THREE.EquirectangularReflectionMapping;
+
+            g_ThreeJsScene.background = texture;
+            g_ThreeJsScene.environment = texture;
+
+            console.info(`${errPrefix}HDRI image successfully loaded.`);
+        } );
+     */
+
+    new RGBELoader()
+        // .setDataType( THREE.UnsignedByteType )
+        /*
+        From the ThreeJS Discourse forum
+
+        With this version of three.js you load your HDR
+        textures as RGBE encoded RGBA8 textures which
+        only allows nearest texture filtering. I suggest
+        you use .setDataType( THREE.HalfFloatType ) which
+        enables linear texture filtering.
+         */
+        .setDataType( THREE.HalfFloatType )
+        .load( fullUrlToHdri, ( texture ) => {
+
+            const envMap = g_PmremGenerator.fromEquirectangular( texture ).texture;
+
+            g_ThreeJsScene.background = envMap;
+            g_ThreeJsScene.environment = envMap;
+
+            texture.dispose();
+            g_PmremGenerator.dispose();
+        } );
+}
+
+
+/**
+ * Initialize the NFT showcase world.
+ */
 function initializeNftShowcase() {
     const errPrefix = `(function initializeNftShowcase) `;
 
@@ -1007,29 +1088,47 @@ function initializeNftShowcase() {
     threeJsCanvas.appendChild(g_ThreeJsRenderer.domElement);
     setRendererSize();
 
+    // Create elements needed for HDRI image usage.
+    g_PmremGenerator = new THREE.PMREMGenerator(g_ThreeJsRenderer);
+    g_PmremGenerator.compileEquirectangularShader();
+
     // Watch for the resizing of the canvas.
     window.addEventListener( 'resize', onWindowResize );
+
+    // Also listen for F11 fullscreen.
+    document.addEventListener('fullscreenchange', (event) => {
+        // document.fullscreenElement will point to the element that
+        // is in fullscreen mode if there is one. If there isn't one,
+        // the value of the property is null.
+        if (document.fullscreenElement) {
+            console.info(`${errPrefix}Element: ${document.fullscreenElement.id} entered full-screen mode.`);
+        } else {
+            console.info('${errPrefix}Leaving full-screen mode.');
+        }
+
+        // In either case, call the window resize function.
+        onWindowResize();
+    });
 
     // HDRI files are served from S3.
     // const theLoader = new RGBELoader();
 
-    // TODO: This should not be hard-coded.
-    const hdrFilename = 'royal_esplanade_4k.hdr';
-    const fullUrlToHdri = `${S3_BASE_URL}/somnium-wave/hdri/${hdrFilename}`;
 
-    console.warn(`${errPrefix}Loading HDR file from S3 using the URL: ${fullUrlToHdri}.`);
+    // Load the initial HDR image.
+    loadOneHdriImage(g_AryHdriImageFilenames[0], true);
 
-    new RGBELoader()
-        .load( fullUrlToHdri, function ( texture ) {
-            texture.mapping = THREE.EquirectangularReflectionMapping;
+    /*
+    // Load all the HDRI files we use in the scene.
+    aryHdriImages.forEach((hdriImageFilenameOnly) => {
+        bVisible = bFirst;
+        loadOneHdriImage(hdriImageFilenameOnly, bVisible);
+        bFirst = false;
+    });
 
-            g_ThreeJsScene.background = texture;
-            g_ThreeJsScene.environment = texture;
+     */
 
-            console.info(`${errPrefix}HDRI image successfully loaded.`);
-
-            testGltf();
-        } );
+    // Load the 3D model.
+    testGltf();
 
     /*
         new RGBELoader()
@@ -1172,11 +1271,13 @@ function onWindowResize() {
     g_ThreeJsCamera.aspect = window.innerWidth / window.innerHeight;
     g_ThreeJsCamera.updateProjectionMatrix();
 
-    // Resize the mirror.
-    theGroundMirror.getRenderTarget().setSize(
-        window.innerWidth * window.devicePixelRatio,
-        window.innerHeight * window.devicePixelRatio
-    );
+    if (theGroundMirror) {
+        // Resize the mirror.
+        theGroundMirror.getRenderTarget().setSize(
+            window.innerWidth * window.devicePixelRatio,
+            window.innerHeight * window.devicePixelRatio
+        );
+    }
 
     setRendererSize();
 }
@@ -1385,7 +1486,9 @@ function testGltf() {
 export {
     addObjectToObjectsList,
     dumpPositionAndOrientation,
+    g_AryHdriImageFilenames,
     initializeThreeJS,
+    loadOneHdriImage,
     makeBoxInScene_original,
     removeObjFromSceneByUuid,
     testGltf
